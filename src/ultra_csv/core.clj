@@ -14,9 +14,10 @@
   [rdr read-from-csv transform-line]
   (let [res (read-from-csv)]
     (if res
-      (cons (transform-line res) (lazy-seq (read-row rdr read-from-csv transform-line)))
-      (do (.close rdr)
-          nil))))
+      (cons
+       (vary-meta (transform-line res) assoc ::csv-reader rdr)
+       (lazy-seq (read-row rdr read-from-csv transform-line)))
+      (.close rdr))))
 
 (defn- greedy-read-fn
   [rdr read-from-csv transform-line]
@@ -25,14 +26,12 @@
      (let [res (read-from-csv)]
        (if res
          (transform-line res)
-         (do (.close rdr)
-             nil))))
+         (.close rdr))))
    (vary-meta assoc ::csv-reader rdr)))
 
 (def processor-types
   {:long org.supercsv.cellprocessor.ParseLong
-   :not-null org.supercsv.cellprocessor.constraint.NotNull
-   })
+   :not-null org.supercsv.cellprocessor.constraint.NotNull})
 
 (defn processor-specs
   [specs]
