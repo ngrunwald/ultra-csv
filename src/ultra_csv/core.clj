@@ -20,12 +20,14 @@
 
 (defn- greedy-read-fn
   [rdr read-from-csv transform-line]
-  (fn []
-    (let [res (read-from-csv)]
-      (if res
-        (transform-line res)
-        (do (.close rdr)
-            nil)))))
+  (->
+   (fn []
+     (let [res (read-from-csv)]
+       (if res
+         (transform-line res)
+         (do (.close rdr)
+             nil))))
+   (vary-meta assoc ::csv-reader rdr)))
 
 (def processor-types
   {:long org.supercsv.cellprocessor.ParseLong
@@ -191,16 +193,24 @@
       :or {strict? true}}]
   (if strict?
     f
-    (fn []
-      (let [res (try
-                  (f)
-                  (catch Exception e
-                    (if-not silent?
-                      (println e "EXCEPTION" e))
-                    e))]
-        (if (instance? Exception res)
-          (recur)
-          res)))))
+    (let [m (meta f)]
+      (->
+       (fn []
+         (let [res (try
+                     (f)
+                     (catch Exception e
+                       (if-not silent?
+                         (println e "EXCEPTION" e))
+                       e))]
+           (if (instance? Exception res)
+             (recur)
+             res)))
+       (vary-meta (fn [o n] (merge n o)) m)))))
+
+(defn close!
+  [f]
+  (when-let [rdr (get (meta f) ::csv-reader)]
+    (.close rdr)))
 
 (defn read-csv
   ([uri
