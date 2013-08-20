@@ -1,13 +1,18 @@
 # ultra-csv
 
-A Clojure library designed to ... well, that part is up to you.
+A smart reader/writer for CSV files
+
+**HIGHLY EXPERIMENTAL**
+**USE AT YOUR OWN RISK**
 
 ## Usage
 
-FIXME
+```clojure
+(def csv-seq (ultra-csv/read-csv "/my/path/to.csv"))
+```
 
 ## License
 
-Copyright © 2013 FIXME
+Copyright © 2013 Nils Grunwald (nils@grunwald.fr)
 
 Distributed under the Eclipse Public License, the same as Clojure.

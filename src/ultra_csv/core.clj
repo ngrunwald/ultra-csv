@@ -11,27 +11,28 @@
 (declare analyze-csv)
 
 (defn- read-row
-  [rdr read-from-csv transform-line]
+  [rdr read-from-csv transform-line limit]
   (let [res (read-from-csv)]
-    (if res
+    (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
       (cons
        (vary-meta (transform-line res) assoc ::csv-reader rdr)
-       (lazy-seq (read-row rdr read-from-csv transform-line)))
+       (lazy-seq (read-row rdr read-from-csv transform-line limit)))
       (.close rdr))))
 
 (defn- greedy-read-fn
-  [rdr read-from-csv transform-line]
+  [rdr read-from-csv transform-line limit]
   (->
    (fn []
      (let [res (read-from-csv)]
-       (if res
+       (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
          (transform-line res)
          (.close rdr))))
    (vary-meta assoc ::csv-reader rdr)))
 
 (def processor-types
   {:long org.supercsv.cellprocessor.ParseLong
-   :not-null org.supercsv.cellprocessor.constraint.NotNull})
+   :not-null org.supercsv.cellprocessor.constraint.NotNull
+   :double org.supercsv.cellprocessor.ParseDouble})
 
 (defn processor-specs
   [specs]
@@ -136,8 +137,21 @@
   (if (re-matches #"\d+" s)
     true false))
 
+(defn double-string?
+  [s]
+  (if (re-matches #"-?\d+([\.,]\d+)?" s)
+    true false))
+
 (def known-types
-  [[:long long-string?]])
+  [[:long long-string?]
+   [:double double-string?]])
+
+(defn take-higher
+  [cands]
+  (if (empty? cands)
+    []
+    (let [lookfor (into #{} cands)]
+      [(first (remove nil? (filter #(contains? lookfor %) (map first known-types))))])))
 
 (defn guess-types
   [lines]
@@ -152,7 +166,7 @@
                                acc))
                             {} candidates)]
           (recur (rest todo) valid))
-        (keys candidates)))))
+        (take-higher (keys candidates))))))
 
 (defn analyze-csv
   [uri lookahead]
@@ -213,11 +227,12 @@
 
 (defn read-csv
   ([uri
-    {:keys [preference header field-names specs encoding
+    {:keys [preference header field-names field-names-fn specs encoding
             guess-types? strict? greedy? counter-step
-            silent?]
+            silent? limit]
      :or {encoding "utf-8" header true guess-types? true
-          strict? true}
+          strict? true
+          field-names-fn str/trim}
      :as opts}]
      (let [rdr (io/reader uri :encoding encoding)]
        (try
@@ -232,7 +247,7 @@
                csv-rdr (if vec-output
                          (CsvListReader. rdr pref-opts)
                          (CsvMapReader. rdr pref-opts))
-               fnames (map str/trim
+               fnames (map field-names-fn
                            (cond
                             header (.getHeader csv-rdr true)
                             field-names field-names
@@ -252,14 +267,16 @@
                                    (make-read-fn #(.read csv-rdr processors)
                                                  {:strict? strict?
                                                   :silent? silent?})
-                                   (fn [e] (into [] e)))
+                                   (fn [e] (into [] e))
+                                   limit)
                           (read-fn csv-rdr
                                    (make-read-fn #(.read csv-rdr fnames-arr processors)
                                                  {:strict? strict?
                                                   :silent? silent?})
                                    (fn [e] (->> e
                                                (into {})
-                                               (walk/keywordize-keys)))))]
+                                               (walk/keywordize-keys)))
+                                   limit))]
              (cond
               counter-step (wrap-with-counter res-fn counter-step)
               :default res-fn)))
