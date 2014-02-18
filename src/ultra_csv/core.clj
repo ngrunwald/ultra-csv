@@ -32,14 +32,15 @@
 (def processor-types
   {:long org.supercsv.cellprocessor.ParseLong
    :not-null org.supercsv.cellprocessor.constraint.NotNull
-   :double org.supercsv.cellprocessor.ParseDouble})
+   :double org.supercsv.cellprocessor.ParseDouble
+   :optional org.supercsv.cellprocessor.Optional})
 
 (defn processor-specs
   [specs]
   (into {}
         (for [[k processor-names] specs]
           (let [processor
-                (loop [todo processor-names
+                (loop [todo (reverse processor-names)
                        pr nil]
                   (if-let [nam (first todo)]
                     (let [klass (get processor-types nam)]
@@ -151,7 +152,7 @@
   (if (empty? cands)
     []
     (let [lookfor (into #{} cands)]
-      [(first (remove nil? (filter #(contains? lookfor %) (map first known-types))))])))
+      [:optional (first (remove nil? (filter #(contains? lookfor %) (map first known-types))))])))
 
 (defn guess-types
   [lines]
