@@ -1,6 +1,6 @@
 # ultra-csv
 
-A smart reader/writer for CSV files
+A smart reader/writer for CSV files. Right now only reading is implemented.
 
 **HIGHLY EXPERIMENTAL**
 **USE AT YOUR OWN RISK**
@@ -13,6 +13,6 @@ A smart reader/writer for CSV files
 
 ## License
 
-Copyright © 2013 Nils Grunwald (nils@grunwald.fr)
+Copyright © 2014 Nils Grunwald (nils@grunwald.fr)
 
 Distributed under the Eclipse Public License, the same as Clojure.
