@@ -6,7 +6,11 @@
            [org.supercsv.prefs CsvPreference CsvPreference$Builder]
            [org.supercsv.cellprocessor.ift CellProcessor]
            [org.supercsv.cellprocessor Optional]
-           [java.io Reader]))
+           [java.io Reader InputStream]
+           [java.nio.charset Charset]
+           [com.ibm.icu.text CharsetDetector]
+           [org.apache.commons.io.input BOMInputStream]
+           [org.apache.commons.io ByteOrderMark]))
 
 (declare analyze-csv)
 
@@ -174,6 +178,21 @@
           (take-higher (keys candidates))
           [])))))
 
+(def available-charsets (into #{} (.keySet (Charset/availableCharsets))))
+
+(defn guess-charset
+  [^InputStream is]
+  (try
+    (let [^CharsetDetector detector (CharsetDetector.)]
+      (.enableInputFilter detector true)
+      (.setText detector is)
+      (let [m (.detect detector)
+            encoding (.getName m)]
+        (if (available-charsets encoding)
+          encoding
+          "utf-8")))
+    (catch Exception e "utf-8")))
+
 (defn analyze-csv
   [uri lookahead]
   (when (instance? Reader uri)
@@ -236,14 +255,23 @@
     {:keys [preference header field-names field-names-fn specs encoding
             guess-types? strict? greedy? counter-step
             silent? limit]
-     :or {encoding "utf-8" header true guess-types? true
+     :or {header true guess-types? true
           strict? true
           field-names-fn str/trim}
      :as opts}]
-     (let [rdr (io/reader uri :encoding encoding)]
+     (let [rdr (if (instance? java.io.Reader uri) 
+                 uri
+                 (let [boms (into-array ByteOrderMark 
+                                        [ByteOrderMark/UTF_16LE ByteOrderMark/UTF_16BE
+                                         ByteOrderMark/UTF_32LE ByteOrderMark/UTF_32BE
+                                         ByteOrderMark/UTF_8])]
+                   (with-open [istream (io/input-stream uri)]
+                    (let [enc (or encoding (guess-charset istream))
+                          content (slurp (BOMInputStream. istream boms) :encoding enc)]
+                      (java.io.StringReader. content)))))]
        (try
          (let [{guessed-procs :processors :as analysis} (try
-                                                          (analyze-csv uri 100)
+                                                          (analyze-csv rdr 100)
                                                           (catch Exception e
                                                             {}))
                ^CsvPreference pref-opts (make-prefs (get opts :preference
@@ -280,14 +308,13 @@
                                                  {:strict? strict?
                                                   :silent? silent?})
                                    (fn [e] (->> e
-                                               (into {})
-                                               (walk/keywordize-keys)))
+                                                (into {})
+                                                (walk/keywordize-keys)))
                                    limit))]
              (cond
               counter-step (wrap-with-counter res-fn counter-step)
               :default res-fn)))
-         (catch Exception e
-           (.close rdr)
-           (throw e)))))
+         (catch Exception _ 
+           (.close rdr)))))
   ([uri] (read-csv uri {})))
 
