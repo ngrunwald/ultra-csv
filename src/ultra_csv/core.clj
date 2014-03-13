@@ -158,16 +158,21 @@
   [lines]
   (for [offset (range (count (first lines)))]
     (loop [todo lines
-           candidates known-types]
+           candidates known-types
+           not-nil 0]
       (if-let [line (first todo)]
         (let [field (nth line offset)
               valid (reduce (fn [acc [typ f]]
-                              (if (and field (f field))
+                              (if
+                               (or (nil? field) (f field))
                                (assoc acc typ f)
                                acc))
-                            {} candidates)]
-          (recur (rest todo) valid))
-        (take-higher (keys candidates))))))
+                            {} candidates)
+              new-nil (if (nil? field) not-nil (inc not-nil))]
+          (recur (rest todo) valid new-nil))
+        (if (> not-nil (* 0.5 (count lines)))
+          (take-higher (keys candidates))
+          [])))))
 
 (defn analyze-csv
   [uri lookahead]
