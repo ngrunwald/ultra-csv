@@ -73,12 +73,13 @@
 (defn guess-delimiter
   [lines]
   (let [all-dels (for [line lines
-                       :let [clean-line (str/replace line #"\"[^\"]+\"" "")]]
+                       ;; :let [clean-line (str/replace line #"\"[^\"]*\"" "")]
+                       ]
                    (into {}
                          (map
                           (fn [character]
                             [character
-                             (count (find-char-pos clean-line character))])
+                             (count (find-char-pos line character))])
                           [\, \; \space \tab])))
         freqs (first all-dels)
         report (loop [todo all-dels
@@ -249,6 +250,21 @@
   (when-let [rdr (get (meta f) ::csv-reader)]
     (.close rdr)))
 
+(defn get-reader
+  ([src encoding]
+     (if (instance? java.io.Reader src)
+       [src (fn [] nil) encoding]
+       (let [boms (into-array ByteOrderMark 
+                              [ByteOrderMark/UTF_16LE ByteOrderMark/UTF_16BE
+                               ByteOrderMark/UTF_32LE ByteOrderMark/UTF_32BE
+                               ByteOrderMark/UTF_8])]
+         (with-open [istream (io/input-stream src)]
+           (let [enc (or encoding (guess-charset istream))
+                 content (slurp (BOMInputStream. istream boms) :encoding enc)
+                 rdr (java.io.StringReader. content)]
+             [rdr (fn [] (do (.close rdr) true)) enc])))))
+  ([src] (get-reader src nil)))
+
 (defn guess-spec
   ([uri
     {:keys [preference header field-names field-names-fn specs encoding
@@ -257,18 +273,10 @@
           guess-types? true
           field-names-fn str/trim}
      :as opts}]
-     (let [[rdr enc] (if (instance? java.io.Reader uri) 
-                       [uri encoding]
-                       (let [boms (into-array ByteOrderMark 
-                                              [ByteOrderMark/UTF_16LE ByteOrderMark/UTF_16BE
-                                               ByteOrderMark/UTF_32LE ByteOrderMark/UTF_32BE
-                                               ByteOrderMark/UTF_8])]
-                         (with-open [istream (io/input-stream uri)]
-                           (let [enc (or encoding (guess-charset istream))
-                                 content (slurp (BOMInputStream. istream boms) :encoding enc)]
-                             [(java.io.StringReader. content) enc]))))]
+     (let [[rdr clean-rdr enc] (get-reader uri encoding)]
        (try
-         (let [{guessed-procs :processors
+         (let [resettable? (.markSupported rdr)
+               {guessed-procs :processors
                 guessed-delimiter :delimiter
                 :as analysis} (try
                                 (analyze-csv rdr 100)
@@ -292,10 +300,22 @@
                             (merge (zipmap fnames guessed-procs) specs)
                             specs)]
            (merge {:specs full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
-                   :encoding enc :skip-analysis? true} opts))
+                   :encoding enc :skip-analysis? true :header (true? header)} opts))
          (catch Exception e
-           (.close rdr)
-           (throw e))))))
+           (println (format "error while reading: %s" (str e)))
+           ;; (throw e)
+           )
+         (finally
+           (clean-rdr)))))
+  ([uri] (guess-spec uri {})))
+
+(defn guess-possible?
+  [rdr]
+  (try
+    (if-not (instance? java.io.Reader rdr)
+     true
+     (.markSupported rdr))
+    (catch Exception _ false)))
 
 (defn read-csv
   ([uri
@@ -306,60 +326,61 @@
           strict? true
           field-names-fn str/trim}
      :as opts}]
-     (let [rdr (if (instance? java.io.Reader uri) 
-                 uri
-                 (let [boms (into-array ByteOrderMark 
-                                        [ByteOrderMark/UTF_16LE ByteOrderMark/UTF_16BE
-                                         ByteOrderMark/UTF_32LE ByteOrderMark/UTF_32BE
-                                         ByteOrderMark/UTF_8])]
-                   (with-open [istream (io/input-stream uri)]
-                    (let [enc (or encoding (guess-charset istream))
-                          content (slurp (BOMInputStream. istream boms) :encoding enc)]
-                      (java.io.StringReader. content)))))]
-       (try
-         (let [{:keys [preference header field-names field-names-fn specs encoding
-                       guess-types? strict? greedy? counter-step
-                       silent? limit skip-analysis?]
-                :or {header true guess-types? true
-                     strict? true
-                     field-names-fn str/trim}
-                :as full-spec} (if skip-analysis?
-                                 opts
-                                 (guess-spec uri opts))
-                fnames-arr (into-array String (map name field-names))
-                processors (make-array CellProcessor (count field-names))
-                specs-proc (processor-specs specs)
-                read-fn (if greedy? greedy-read-fn read-row)
-                vec-output (not (or header field-names))
-                ^CsvPreference pref-opts (make-prefs (merge
-                                                      full-spec
-                                                      (get opts :preference
-                                                           (assoc opts :uri uri))))
-                csv-rdr (if vec-output
-                          (CsvListReader. rdr pref-opts)
-                          (CsvMapReader. rdr pref-opts))]
-           (doseq [[i nam] (map-indexed (fn [i v] [i v]) field-names)]
-             (let [proc (get specs-proc nam (Optional.))]
-               (aset processors i proc)))
-           (let [res-fn (if vec-output
-                          (read-fn csv-rdr
-                                   (make-read-fn #(.read csv-rdr processors)
-                                                 {:strict? strict?
-                                                  :silent? silent?})
-                                   (fn [e] (into [] e))
-                                   limit)
-                          (read-fn csv-rdr
-                                   (make-read-fn #(.read csv-rdr fnames-arr processors)
-                                                 {:strict? strict?
-                                                  :silent? silent?})
-                                   (fn [e] (->> e
-                                                (into {})
-                                                (walk/keywordize-keys)))
-                                   limit))]
-             (cond
-              counter-step (wrap-with-counter res-fn counter-step)
-              :default res-fn)))
-         (catch Exception e
-           (.close rdr)
-           (throw e)))))
+     (let [guess-allowed? (guess-possible? uri)]
+       (if (and (or (not skip-analysis?)
+                    guess-types)
+                (not guess-allowed?))
+         (throw (ex-info (format "Input of class %s cannot be reset, cannot guess its specs" (class uri))))
+         (let [[rdr clean-rdr enc] (get-reader uri encoding)]
+           (try
+             (let [resettable? (.markSupported rdr)
+                   {:keys [preference header field-names field-names-fn specs encoding
+                           guess-types? strict? greedy? counter-step
+                           silent? limit skip-analysis?]
+                    :or {header true guess-types? true
+                         strict? true
+                         field-names-fn str/trim}
+                    :as full-spec} (if skip-analysis?
+                                     opts
+                                     (guess-spec uri opts))
+                   fnames-arr (into-array String (map name field-names))
+                   processors (make-array CellProcessor (count field-names))
+                   specs-proc (processor-specs specs)
+                   read-fn (if greedy? greedy-read-fn read-row)
+                   vec-output (not (or header field-names))
+                   ^CsvPreference pref-opts (make-prefs (merge
+                                                         full-spec
+                                                         (get opts :preference
+                                                              (assoc opts :uri uri))))
+                   csv-rdr (if vec-output
+                             (CsvListReader. rdr pref-opts)
+                             (CsvMapReader. rdr pref-opts))
+                   _ (if header (.getHeader csv-rdr true))]
+               (doseq [[i nam] (map-indexed (fn [i v] [i v]) field-names)]
+                 (let [proc (get specs-proc nam (Optional.))]
+                   (aset processors i proc)))
+               (let [res-fn (if vec-output
+                              (read-fn csv-rdr
+                                       (make-read-fn #(.read csv-rdr processors)
+                                                     {:strict? strict?
+                                                      :silent? silent?})
+                                       (fn [e] (into [] e))
+                                       limit)
+                              (read-fn csv-rdr
+                                       (make-read-fn #(.read csv-rdr fnames-arr processors)
+                                                     {:strict? strict?
+                                                      :silent? silent?})
+                                       (fn [e] (->> e
+                                                    (into {})
+                                                    (walk/keywordize-keys)))
+                                       limit))]
+                 (cond
+                  counter-step (wrap-with-counter res-fn counter-step)
+                  :default res-fn)))
+             (catch Exception e
+               (println (format "error while reading: %s" (str e)))
+               ;; (throw e)
+               )
+             (finally
+               (clean-rdr)))))))
   ([uri] (read-csv uri {})))
