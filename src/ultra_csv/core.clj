@@ -14,6 +14,36 @@
 
 (declare analyze-csv)
 
+(def available-charsets (into #{} (.keySet (Charset/availableCharsets))))
+
+(defn guess-charset
+  [^InputStream is]
+  (try
+    (let [^CharsetDetector detector (CharsetDetector.)]
+      (.enableInputFilter detector true)
+      (.setText detector is)
+      (let [m (.detect detector)
+            encoding (.getName m)]
+        (if (available-charsets encoding)
+          encoding
+          "utf-8")))
+    (catch Exception e "utf-8")))
+
+(defn get-reader
+  ([src encoding]
+     (if (instance? java.io.Reader src)
+       [src (fn [] nil) encoding]
+       (let [boms (into-array ByteOrderMark 
+                              [ByteOrderMark/UTF_16LE ByteOrderMark/UTF_16BE
+                               ByteOrderMark/UTF_32LE ByteOrderMark/UTF_32BE
+                               ByteOrderMark/UTF_8])]
+         (with-open [istream (io/input-stream src)]
+           (let [enc (or encoding (guess-charset istream))
+                 content (slurp (BOMInputStream. istream boms) :encoding enc)
+                 rdr (java.io.StringReader. content)]
+             [rdr (fn [] (do (.close rdr) true)) enc])))))
+  ([src] (get-reader src nil)))
+
 (defn- read-row
   [rdr read-from-csv transform-line limit]
   (let [res (read-from-csv)]
@@ -32,6 +62,18 @@
          (transform-line res)
          (.close rdr))))
    (vary-meta assoc ::csv-reader rdr)))
+
+(defn- line-read-fn
+  [read-from-csv transform-line]
+  (fn [src]
+    (let [[rdr close-rdr] (if (instance? java.io.Reader src)
+                            [src (fn [] nil)]
+                            (let [rdr (java.io.StringReader. src)]
+                              [rdr (fn [] (.close rdr))]))]
+      (let [entity (when-let [res (read-from-csv rdr)]
+                     (transform-line res))]
+        (close-rdr)
+        entity))))
 
 (def processor-types
   {:long org.supercsv.cellprocessor.ParseLong
@@ -178,21 +220,6 @@
           (take-higher (keys candidates))
           [])))))
 
-(def available-charsets (into #{} (.keySet (Charset/availableCharsets))))
-
-(defn guess-charset
-  [^InputStream is]
-  (try
-    (let [^CharsetDetector detector (CharsetDetector.)]
-      (.enableInputFilter detector true)
-      (.setText detector is)
-      (let [m (.detect detector)
-            encoding (.getName m)]
-        (if (available-charsets encoding)
-          encoding
-          "utf-8")))
-    (catch Exception e "utf-8")))
-
 (defn analyze-csv
   [uri lookahead]
   (when (instance? Reader uri)
@@ -250,21 +277,6 @@
   (when-let [rdr (get (meta f) ::csv-reader)]
     (.close rdr)))
 
-(defn get-reader
-  ([src encoding]
-     (if (instance? java.io.Reader src)
-       [src (fn [] nil) encoding]
-       (let [boms (into-array ByteOrderMark 
-                              [ByteOrderMark/UTF_16LE ByteOrderMark/UTF_16BE
-                               ByteOrderMark/UTF_32LE ByteOrderMark/UTF_32BE
-                               ByteOrderMark/UTF_8])]
-         (with-open [istream (io/input-stream src)]
-           (let [enc (or encoding (guess-charset istream))
-                 content (slurp (BOMInputStream. istream boms) :encoding enc)
-                 rdr (java.io.StringReader. content)]
-             [rdr (fn [] (do (.close rdr) true)) enc])))))
-  ([src] (get-reader src nil)))
-
 (defn guess-spec
   ([uri
     {:keys [preference header field-names field-names-fn specs encoding
@@ -316,6 +328,34 @@
      true
      (.markSupported rdr))
     (catch Exception _ false)))
+
+(defn csv-line-reader
+  [{:keys [preference header field-names field-names-fn specs encoding
+           guess-types? strict? greedy? counter-step
+           silent? limit skip-analysis?]
+     :or {header true guess-types? true
+          strict? true
+          field-names-fn str/trim}
+     :as opts}]
+  (let [fnames-arr (into-array String (map name field-names))
+        processors (make-array CellProcessor (count field-names))
+        specs-proc (processor-specs specs)
+        ^CsvPreference pref-opts (make-prefs opts)
+        read-fn line-read-fn
+        vec-output (not (or header field-names))
+        res-fn (if vec-output
+                 (read-fn (fn [rdr]
+                            (with-open [csv-rdr (CsvListReader. rdr pref-opts)]
+                              (.read csv-rdr processors)))
+                          (fn [e] (into [] e)))
+                 (read-fn (fn [rdr]
+                            (with-open [csv-rdr (CsvMapReader. rdr pref-opts)]
+                              (.read csv-rdr fnames-arr processors)))
+                          (fn [e] 
+                            (->> e
+                                 (into {})
+                                 (walk/keywordize-keys)))))]
+    res-fn))
 
 (defn read-csv
   ([uri
