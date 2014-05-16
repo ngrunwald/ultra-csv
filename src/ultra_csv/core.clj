@@ -1,7 +1,8 @@
 (ns ultra-csv.core
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clojure.walk :as walk])
+            [clojure.walk :as walk]
+            [schema [core :as s] [coerce :as c]])
   (:import [org.supercsv.io CsvMapReader CsvListReader]
            [org.supercsv.prefs CsvPreference CsvPreference$Builder]
            [org.supercsv.cellprocessor.ift CellProcessor]
@@ -47,11 +48,13 @@
 (defn- read-row
   [rdr read-from-csv transform-line limit]
   (let [res (read-from-csv)]
+    (println "RES" (transform-line res))
     (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
       (cons
        (vary-meta (transform-line res) assoc ::csv-reader rdr)
        (lazy-seq (read-row rdr read-from-csv transform-line limit)))
-      (.close rdr))))
+      ;; (.close rdr)
+      )))
 
 (defn- greedy-read-fn
   [rdr read-from-csv transform-line limit]
@@ -115,13 +118,12 @@
 (defn guess-delimiter
   [lines]
   (let [all-dels (for [line lines
-                       ;; :let [clean-line (str/replace line #"\"[^\"]*\"" "")]
-                       ]
+                       :let [clean-line (str/replace line #"\"[^\"]*\"" "")]]
                    (into {}
                          (map
                           (fn [character]
                             [character
-                             (count (find-char-pos line character))])
+                             (count (find-char-pos clean-line character))])
                           [\, \; \space \tab])))
         freqs (first all-dels)
         report (loop [todo all-dels
@@ -143,7 +145,7 @@
   (make-prefs [arg] "generates a CsvPreference object"))
 
 (defn csv-prefs
-  [{:keys [quote-symbol delimiter end-of-lines uri specs]
+  [{:keys [quote-symbol delimiter end-of-lines]
     :or {quote-symbol \"
          end-of-lines "\n"
          delimiter \,}}]
@@ -179,9 +181,9 @@
         (.close listr)
         seg-lines))))
 
-(defn long-string?
+(defn int-string?
   [s]
-  (if (re-matches #"\d+" s)
+  (if (re-matches #"-?\d+" s)
     true false))
 
 (defn double-string?
@@ -189,16 +191,23 @@
   (if (re-matches #"-?\d+([\.,]\d+)?" s)
     true false))
 
+(def Num java.lang.Double)
+
 (def known-types
-  [[:long long-string?]
-   [:double double-string?]])
+  [[s/Int int-string?]
+   [Num double-string?]])
+
+(def csv-coercer
+  {s/Int (fn [s] (Long/parseLong s))
+   Num (fn [s] (Double/parseDouble s))
+   s/Keyword (fn [s] (keyword s))})
 
 (defn take-higher
   [cands]
   (if (empty? cands)
-    []
+    s/Str
     (let [lookfor (into #{} cands)]
-      [:optional (first (remove nil? (filter #(contains? lookfor %) (map first known-types))))])))
+      (first (remove nil? (filter #(contains? lookfor %) (map first known-types)))))))
 
 (defn guess-types
   [lines]
@@ -218,7 +227,7 @@
           (recur (rest todo) valid new-nil))
         (if (> not-nil (* 0.5 (count lines)))
           (take-higher (keys candidates))
-          [])))))
+          s/Str)))))
 
 (defn analyze-csv
   [uri lookahead]
@@ -236,10 +245,10 @@
                       ls))
             delimiter (guess-delimiter lines)
             seg-lines (parse-fields lines delimiter)
-            procs (guess-types seg-lines)]
+            fields-schema (guess-types seg-lines)]
         (if (instance? Reader uri)
           (.reset uri))
-        {:delimiter delimiter :processors procs})
+        {:delimiter delimiter :fields-schema fields-schema})
       (finally
         (if-not (instance? Reader uri)
           (.close rdr))))))
@@ -279,16 +288,18 @@
 
 (defn guess-spec
   ([uri
-    {:keys [preference header field-names field-names-fn specs encoding
-            guess-types? delimiter]
+    {:keys [preference header field-names field-names-fn schema encoding
+            guess-types? delimiter nullable-fields? keywordize-keys?]
      :or {header true
           guess-types? true
-          field-names-fn str/trim}
+          field-names-fn str/trim
+          nullable-fields? true
+          keywordize-keys? true}
      :as opts}]
      (let [[rdr clean-rdr enc] (get-reader uri encoding)]
        (try
          (let [resettable? (.markSupported rdr)
-               {guessed-procs :processors
+               {guessed-schema :fields-schema
                 guessed-delimiter :delimiter
                 :as analysis} (try
                                 (analyze-csv rdr 100)
@@ -303,19 +314,27 @@
                csv-rdr (if vec-output
                          (CsvListReader. rdr pref-opts)
                          (CsvMapReader. rdr pref-opts))
-               fnames (map field-names-fn
-                           (cond
-                            header (.getHeader csv-rdr true)
-                            field-names field-names
-                            (> (count guessed-procs) 0) (range (count guessed-procs))))
-               full-specs (if guess-types?
-                            (merge (zipmap fnames guessed-procs) specs)
-                            specs)]
-           (merge {:specs full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
+               fnames (when-not vec-output
+                        (map field-names-fn
+                             (cond
+                              header (.getHeader csv-rdr true)
+                              field-names field-names)))
+               wrap-types (if nullable-fields? #(s/maybe %) identity)
+               wrap-keys (if keywordize-keys? (comp keyword str/trim) str/trim)
+               full-specs (if vec-output
+                            (let [infered-schema (map-indexed (fn [idx t] (s/one (wrap-types t) (str "col" idx))) guessed-schema)]
+                              (if (and guess-types? (vector? schema) (= (count schema) (count infered-schema)))
+                                (into [] (map (fn [given guessed] (if (nil? given) guessed given)) schema infered-schema))
+                                (into [] infered-schema)))
+                            (let [infered-schema (zipmap (map wrap-keys fnames) (map wrap-types guessed-schema))]
+                              (if guess-types?
+                               (merge infered-schema schema)
+                               infered-schema)))]
+           (merge {:schema full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
                    :encoding enc :skip-analysis? true :header (true? header)} opts))
          (catch Exception e
            (println (format "error while reading: %s" (str e)))
-           ;; (throw e)
+           (throw e)
            )
          (finally
            (clean-rdr)))))
@@ -330,7 +349,7 @@
     (catch Exception _ false)))
 
 (defn csv-line-reader
-  [{:keys [preference header field-names field-names-fn specs encoding
+  [{:keys [preference header field-names field-names-fn schema encoding
            guess-types? strict? greedy? counter-step
            silent? limit skip-analysis?]
      :or {header true guess-types? true
@@ -338,19 +357,17 @@
           field-names-fn str/trim}
      :as opts}]
   (let [fnames-arr (into-array String (map name field-names))
-        processors (make-array CellProcessor (count field-names))
-        specs-proc (processor-specs specs)
         ^CsvPreference pref-opts (make-prefs opts)
         read-fn line-read-fn
         vec-output (not (or header field-names))
         res-fn (if vec-output
                  (read-fn (fn [rdr]
                             (with-open [csv-rdr (CsvListReader. rdr pref-opts)]
-                              (.read csv-rdr processors)))
+                              (.read csv-rdr)))
                           (fn [e] (into [] e)))
                  (read-fn (fn [rdr]
                             (with-open [csv-rdr (CsvMapReader. rdr pref-opts)]
-                              (.read csv-rdr fnames-arr processors)))
+                              (.read csv-rdr fnames-arr)))
                           (fn [e] 
                             (->> e
                                  (into {})
@@ -359,12 +376,15 @@
 
 (defn read-csv
   ([uri
-    {:keys [preference header field-names field-names-fn specs encoding
+    {:keys [preference header field-names field-names-fn schema encoding
             guess-types? strict? greedy? counter-step
-            silent? limit skip-analysis?]
+            silent? limit skip-analysis? nullable-fields?
+            keywordize-keys?]
      :or {header true guess-types? true
           strict? true
-          field-names-fn str/trim}
+          field-names-fn str/trim
+          nullable-fields? true
+          keywordize-keys? true}
      :as opts}]
      (let [guess-allowed? (guess-possible? uri)]
        (if (and (or (not skip-analysis?)
@@ -374,7 +394,7 @@
          (let [[rdr clean-rdr enc] (get-reader uri encoding)]
            (try
              (let [resettable? (.markSupported rdr)
-                   {:keys [preference header field-names field-names-fn specs encoding
+                   {:keys [preference header field-names field-names-fn schema encoding
                            guess-types? strict? greedy? counter-step
                            silent? limit skip-analysis?]
                     :or {header true guess-types? true
@@ -384,8 +404,6 @@
                                      opts
                                      (guess-spec uri opts))
                    fnames-arr (into-array String (map name field-names))
-                   processors (make-array CellProcessor (count field-names))
-                   specs-proc (processor-specs specs)
                    read-fn (if greedy? greedy-read-fn read-row)
                    vec-output (not (or header field-names))
                    ^CsvPreference pref-opts (make-prefs (merge
@@ -396,31 +414,34 @@
                              (CsvListReader. rdr pref-opts)
                              (CsvMapReader. rdr pref-opts))
                    _ (if header (.getHeader csv-rdr true))]
-               (doseq [[i nam] (map-indexed (fn [i v] [i v]) field-names)]
-                 (let [proc (get specs-proc nam (Optional.))]
-                   (aset processors i proc)))
-               (let [res-fn (if vec-output
+               (println "SCHEMA" schema)
+               (let [parse-csv (c/coercer schema csv-coercer)
+                     res-fn (if vec-output
                               (read-fn csv-rdr
-                                       (make-read-fn #(.read csv-rdr processors)
+                                       (make-read-fn #(.read csv-rdr)
                                                      {:strict? strict?
                                                       :silent? silent?})
                                        (fn [e] (into [] e))
                                        limit)
                               (read-fn csv-rdr
-                                       (make-read-fn #(.read csv-rdr fnames-arr processors)
+                                       (make-read-fn #(.read csv-rdr fnames-arr)
                                                      {:strict? strict?
                                                       :silent? silent?})
-                                       (fn [e] (->> e
+                                       (fn [e] (println "E" e)(->> e
                                                     (into {})
-                                                    (walk/keywordize-keys)))
+                                                    ;; (parse-csv)
+                                                    ))
                                        limit))]
                  (cond
                   counter-step (wrap-with-counter res-fn counter-step)
                   :default res-fn)))
              (catch Exception e
                (println (format "error while reading: %s" (str e)))
-               ;; (throw e)
+               (throw e)
                )
              (finally
                (clean-rdr)))))))
   ([uri] (read-csv uri {})))
+
+
+
