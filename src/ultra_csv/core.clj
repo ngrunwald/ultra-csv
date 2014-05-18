@@ -5,8 +5,6 @@
             [schema [core :as s] [coerce :as c]])
   (:import [org.supercsv.io CsvMapReader CsvListReader]
            [org.supercsv.prefs CsvPreference CsvPreference$Builder]
-           [org.supercsv.cellprocessor.ift CellProcessor]
-           [org.supercsv.cellprocessor Optional]
            [java.io Reader InputStream]
            [java.nio.charset Charset]
            [com.ibm.icu.text CharsetDetector]
@@ -48,13 +46,11 @@
 (defn- read-row
   [rdr read-from-csv transform-line limit]
   (let [res (read-from-csv)]
-    (println "RES" (transform-line res))
     (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
       (cons
        (vary-meta (transform-line res) assoc ::csv-reader rdr)
        (lazy-seq (read-row rdr read-from-csv transform-line limit)))
-      ;; (.close rdr)
-      )))
+      (.close rdr))))
 
 (defn- greedy-read-fn
   [rdr read-from-csv transform-line limit]
@@ -77,34 +73,6 @@
                      (transform-line res))]
         (close-rdr)
         entity))))
-
-(def processor-types
-  {:long org.supercsv.cellprocessor.ParseLong
-   :not-null org.supercsv.cellprocessor.constraint.NotNull
-   :double org.supercsv.cellprocessor.ParseDouble
-   :optional org.supercsv.cellprocessor.Optional})
-
-(defn processor-specs
-  [specs]
-  (into {}
-        (for [[k processor-names] specs]
-          (let [processor
-                (loop [todo (reverse processor-names)
-                       pr nil]
-                  (if-let [nam (first todo)]
-                    (let [klass (get processor-types nam)]
-                      (if (nil? pr)
-                        (let [cst (.getConstructor klass (make-array Class 0))
-                              proc (.newInstance cst (make-array Object 0))]
-                          (recur (rest todo) proc))
-                        (let [csts (.getConstructors klass)
-                              cst (first
-                                   (filter
-                                    (fn [c] (= 1 (count (.getParameterTypes c)))) csts))
-                              proc (.newInstance cst (into-array Object [pr]))]
-                          (recur (rest todo) proc))))
-                    pr))]
-            [(str/trim (name k)) processor]))))
 
 (defn find-char-pos
   [line char]
@@ -200,7 +168,7 @@
 (def csv-coercer
   {s/Int (fn [s] (Long/parseLong s))
    Num (fn [s] (Double/parseDouble s))
-   s/Keyword (fn [s] (keyword s))})
+   s/Keyword (fn [s] (println "K" s) (keyword s))})
 
 (defn take-higher
   [cands]
@@ -208,6 +176,13 @@
     s/Str
     (let [lookfor (into #{} cands)]
       (first (remove nil? (filter #(contains? lookfor %) (map first known-types)))))))
+
+(defn keywordize-keys
+  [hm]
+  (persistent!
+   (reduce (fn [acc [k v]]
+             (assoc! acc (keyword k) v))
+           (transient {}) hm)))
 
 (defn guess-types
   [lines]
@@ -414,23 +389,22 @@
                              (CsvListReader. rdr pref-opts)
                              (CsvMapReader. rdr pref-opts))
                    _ (if header (.getHeader csv-rdr true))]
-               (println "SCHEMA" schema)
                (let [parse-csv (c/coercer schema csv-coercer)
+                     read-map (if keywordize-keys? 
+                                (comp parse-csv keywordize-keys)
+                                parse-csv)
                      res-fn (if vec-output
                               (read-fn csv-rdr
                                        (make-read-fn #(.read csv-rdr)
                                                      {:strict? strict?
                                                       :silent? silent?})
-                                       (fn [e] (into [] e))
+                                       (fn [e] (parse-csv (into [] e)))
                                        limit)
                               (read-fn csv-rdr
                                        (make-read-fn #(.read csv-rdr fnames-arr)
                                                      {:strict? strict?
                                                       :silent? silent?})
-                                       (fn [e] (println "E" e)(->> e
-                                                    (into {})
-                                                    ;; (parse-csv)
-                                                    ))
+                                       (fn [e] (read-map e))
                                        limit))]
                  (cond
                   counter-step (wrap-with-counter res-fn counter-step)
