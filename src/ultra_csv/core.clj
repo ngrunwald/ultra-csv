@@ -56,7 +56,9 @@
   [rdr read-from-csv transform-line limit]
   (->
    (fn []
+     (println "HERE")
      (let [res (read-from-csv)]
+       (println "RES" res)
        (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
          (transform-line res)
          (.close rdr))))
@@ -168,7 +170,7 @@
 (def csv-coercer
   {s/Int (fn [s] (Long/parseLong s))
    Num (fn [s] (Double/parseDouble s))
-   s/Keyword (fn [s] (println "K" s) (keyword s))})
+   s/Keyword (fn [s] (keyword s))})
 
 (defn take-higher
   [cands]
@@ -326,7 +328,8 @@
 (defn csv-line-reader
   [{:keys [preference header field-names field-names-fn schema encoding
            guess-types? strict? greedy? counter-step
-           silent? limit skip-analysis?]
+           silent? limit skip-analysis? nullable-fields?
+           keywordize-keys?]
      :or {header true guess-types? true
           strict? true
           field-names-fn str/trim}
@@ -335,18 +338,20 @@
         ^CsvPreference pref-opts (make-prefs opts)
         read-fn line-read-fn
         vec-output (not (or header field-names))
+        parse-csv (c/coercer schema csv-coercer)
+        read-map (if (and (not vec-output) keywordize-keys?) 
+                   (comp parse-csv keywordize-keys)
+                   parse-csv)
         res-fn (if vec-output
                  (read-fn (fn [rdr]
                             (with-open [csv-rdr (CsvListReader. rdr pref-opts)]
                               (.read csv-rdr)))
-                          (fn [e] (into [] e)))
+                          (fn [e] (parse-csv (into [] e))))
                  (read-fn (fn [rdr]
                             (with-open [csv-rdr (CsvMapReader. rdr pref-opts)]
                               (.read csv-rdr fnames-arr)))
                           (fn [e] 
-                            (->> e
-                                 (into {})
-                                 (walk/keywordize-keys)))))]
+                            (read-map e))))]
     res-fn))
 
 (defn read-csv
@@ -390,7 +395,7 @@
                              (CsvMapReader. rdr pref-opts))
                    _ (if header (.getHeader csv-rdr true))]
                (let [parse-csv (c/coercer schema csv-coercer)
-                     read-map (if keywordize-keys? 
+                     read-map (if (and (not vec-output) keywordize-keys?)
                                 (comp parse-csv keywordize-keys)
                                 parse-csv)
                      res-fn (if vec-output
