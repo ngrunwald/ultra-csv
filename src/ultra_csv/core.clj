@@ -36,33 +36,35 @@
                               [ByteOrderMark/UTF_16LE ByteOrderMark/UTF_16BE
                                ByteOrderMark/UTF_32LE ByteOrderMark/UTF_32BE
                                ByteOrderMark/UTF_8])]
-         (with-open [istream (io/input-stream src)]
-           (let [enc (or encoding (guess-charset istream))
-                 content (slurp (BOMInputStream. istream boms) :encoding enc)
-                 rdr (java.io.StringReader. content)]
-             [rdr (fn [] (do (.close rdr) true)) enc])))))
+         (let [istream (io/input-stream src)
+               enc (or encoding (guess-charset istream))
+               rdr (io/reader (BOMInputStream. istream boms) :encoding enc)]
+           [rdr
+            (fn [] (do (.close rdr)
+                       (.close istream)
+                       true))
+            enc]))))
   ([src] (get-reader src nil)))
 
 (defn- read-row
-  [rdr read-from-csv transform-line limit]
-  (let [res (read-from-csv)]
+  [rdr read-from-csv transform-line clean-rdr limit]
+  (let [res (read-from-csv rdr)]
     (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
       (cons
-       (vary-meta (transform-line res) assoc ::csv-reader rdr)
-       (lazy-seq (read-row rdr read-from-csv transform-line limit)))
-      (.close rdr))))
+       (vary-meta (transform-line res) assoc ::csv-reader rdr ::clean-reader clean-rdr)
+       (lazy-seq (read-row rdr read-from-csv transform-line clean-rdr limit)))
+      (clean-rdr)
+      )))
 
 (defn- greedy-read-fn
-  [rdr read-from-csv transform-line limit]
+  [rdr read-from-csv transform-line clean-rdr limit]
   (->
    (fn []
-     (println "HERE")
-     (let [res (read-from-csv)]
-       (println "RES" res)
+     (let [res (read-from-csv rdr)]
        (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
          (transform-line res)
-         (.close rdr))))
-   (vary-meta assoc ::csv-reader rdr)))
+         (clean-rdr))))
+   (vary-meta assoc ::csv-reader rdr ::clean-reader clean-rdr)))
 
 (defn- line-read-fn
   [read-from-csv transform-line]
@@ -260,8 +262,8 @@
 
 (defn close!
   [f]
-  (when-let [rdr (get (meta f) ::csv-reader)]
-    (.close rdr)))
+  (when-let [clean (get (meta f) ::clean-reader)]
+    (clean)))
 
 (defn guess-spec
   ([uri
@@ -400,27 +402,24 @@
                                 parse-csv)
                      res-fn (if vec-output
                               (read-fn csv-rdr
-                                       (make-read-fn #(.read csv-rdr)
+                                       (make-read-fn #(.read %)
                                                      {:strict? strict?
                                                       :silent? silent?})
                                        (fn [e] (parse-csv (into [] e)))
+                                       clean-rdr
                                        limit)
                               (read-fn csv-rdr
-                                       (make-read-fn #(.read csv-rdr fnames-arr)
+                                       (make-read-fn #(.read % fnames-arr)
                                                      {:strict? strict?
                                                       :silent? silent?})
                                        (fn [e] (read-map e))
+                                       clean-rdr
                                        limit))]
                  (cond
                   counter-step (wrap-with-counter res-fn counter-step)
                   :default res-fn)))
              (catch Exception e
                (println (format "error while reading: %s" (str e)))
-               (throw e)
-               )
-             (finally
-               (clean-rdr)))))))
+               (clean-rdr)
+               (throw e)))))))
   ([uri] (read-csv uri {})))
-
-
-
