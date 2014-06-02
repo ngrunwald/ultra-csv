@@ -329,7 +329,7 @@
 
 (defn csv-line-reader
   [{:keys [preference header field-names field-names-fn schema encoding
-           guess-types? strict? greedy? counter-step
+           guess-types? strict? counter-step
            silent? limit skip-analysis? nullable-fields?
            keywordize-keys?]
      :or {header true guess-types? true
