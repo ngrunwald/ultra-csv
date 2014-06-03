@@ -145,7 +145,6 @@
         prefs (make-prefs {:delimiter delimiter})]
     (with-open [rdr (java.io.StringReader. txt)]
       (let [listr (CsvListReader. rdr prefs)
-            _ (.getHeader listr false)
             seg-lines (loop [out []]
                         (if-let [fields (.read listr)]
                           (recur (conj out (into [] fields)))
@@ -208,6 +207,16 @@
           (take-higher (keys candidates))
           s/Str)))))
 
+(defn is-header?
+  [line schema]
+  (if (some nil? line)
+    false
+    (let [full-schema (mapv #(s/one % "toto") schema)]
+      (try
+        (when (s/validate full-schema line) false)
+        (catch Exception _
+          true)))))
+
 (defn analyze-csv
   [uri lookahead]
   (when (instance? Reader uri)
@@ -222,12 +231,14 @@
                         (recur (conj ls line))
                         ls)
                       ls))
+            possible-header (first lines)
             delimiter (guess-delimiter lines)
-            seg-lines (parse-fields lines delimiter)
-            fields-schema (guess-types seg-lines)]
+            seg-lines (parse-fields (rest lines) delimiter)
+            fields-schema (guess-types seg-lines)
+            has-header? (is-header? (first (parse-fields [possible-header] delimiter)) fields-schema)]
         (if (instance? Reader uri)
           (.reset uri))
-        {:delimiter delimiter :fields-schema fields-schema})
+        {:delimiter delimiter :fields-schema fields-schema :header has-header?})
       (finally
         (if-not (instance? Reader uri)
           (.close rdr))))))
@@ -269,8 +280,7 @@
   ([uri
     {:keys [preference header field-names field-names-fn schema encoding
             guess-types? delimiter nullable-fields? keywordize-keys?]
-     :or {header true
-          guess-types? true
+     :or {guess-types? true
           field-names-fn str/trim
           nullable-fields? true
           keywordize-keys? true}
@@ -280,6 +290,7 @@
          (let [resettable? (.markSupported rdr)
                {guessed-schema :fields-schema
                 guessed-delimiter :delimiter
+                guessed-header :header
                 :as analysis} (try
                                 (analyze-csv rdr 100)
                                 (catch Exception e
@@ -289,14 +300,14 @@
                                                       analysis
                                                       (get opts :preference
                                                            (assoc opts :uri uri))))
-               vec-output (not (or header field-names))
+               vec-output (not (or (get opts :header guessed-header) field-names))
                csv-rdr (if vec-output
                          (CsvListReader. rdr pref-opts)
                          (CsvMapReader. rdr pref-opts))
                fnames (when-not vec-output
                         (map field-names-fn
                              (cond
-                              header (.getHeader csv-rdr true)
+                              (or header guessed-header) (.getHeader csv-rdr true)
                               field-names field-names)))
                wrap-types (if nullable-fields? #(s/maybe %) identity)
                wrap-keys (if keywordize-keys? (comp keyword str/trim) str/trim)
@@ -310,11 +321,10 @@
                                (merge infered-schema schema)
                                infered-schema)))]
            (merge {:schema full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
-                   :encoding enc :skip-analysis? true :header (true? header)} opts))
+                   :encoding enc :skip-analysis? true :header guessed-header} opts))
          (catch Exception e
            (println (format "error while reading: %s" (str e)))
-           (throw e)
-           )
+           (throw e))
          (finally
            (clean-rdr)))))
   ([uri] (guess-spec uri {})))
@@ -362,7 +372,7 @@
             guess-types? strict? greedy? counter-step
             silent? limit skip-analysis? nullable-fields?
             keywordize-keys?]
-     :or {header true guess-types? true
+     :or {guess-types? true
           strict? true
           field-names-fn str/trim
           nullable-fields? true
@@ -379,7 +389,7 @@
                    {:keys [preference header field-names field-names-fn schema encoding
                            guess-types? strict? greedy? counter-step
                            silent? limit skip-analysis?]
-                    :or {header true guess-types? true
+                    :or {guess-types? true
                          strict? true
                          field-names-fn str/trim}
                     :as full-spec} (if skip-analysis?
@@ -395,7 +405,7 @@
                    csv-rdr (if vec-output
                              (CsvListReader. rdr pref-opts)
                              (CsvMapReader. rdr pref-opts))
-                   _ (if header (.getHeader csv-rdr true))]
+                   _ (when header (.getHeader csv-rdr true))]
                (let [parse-csv (c/coercer schema csv-coercer)
                      read-map (if (and (not vec-output) keywordize-keys?)
                                 (comp parse-csv keywordize-keys)
