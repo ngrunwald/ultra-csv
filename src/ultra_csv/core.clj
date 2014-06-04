@@ -209,12 +209,15 @@
 
 (defn is-header?
   [line schema]
-  (if (some nil? line)
+  (if (> (count (filter nil? line)) 0)
     false
-    (let [full-schema (mapv #(s/one % "toto") schema)]
+    (let [full-schema (mapv #(s/one % "toto") schema)
+          coerce-line (c/coercer full-schema csv-coercer)]
       (try
-        (when (s/validate full-schema line) false)
-        (catch Exception _
+        (let [coerced (coerce-line line)]
+          (s/validate full-schema coerced)
+          false)
+        (catch Exception e
           true)))))
 
 (defn analyze-csv
