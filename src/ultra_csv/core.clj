@@ -220,6 +220,12 @@
         (catch Exception e
           true)))))
 
+(defn is-quoted?
+  [lines delimiter]
+  (let [quoted-delim (java.util.regex.Pattern/quote (str delimiter))
+        regexp (re-pattern (str (format "\"%s|%s\"" quoted-delim quoted-delim)))]
+    (every? #(re-find regexp %) (take 10 lines))))
+
 (defn analyze-csv
   [uri lookahead]
   (when (instance? Reader uri)
@@ -238,7 +244,8 @@
             delimiter (guess-delimiter lines)
             seg-lines (parse-fields (rest lines) delimiter)
             fields-schema (guess-types seg-lines)
-            has-header? (is-header? (first (parse-fields [possible-header] delimiter)) fields-schema)]
+            has-header? (is-header? (first (parse-fields [possible-header] delimiter)) fields-schema)
+            quoted? (is-quoted? lines delimiter)]
         (if (instance? Reader uri)
           (.reset uri))
         {:delimiter delimiter :fields-schema fields-schema :header has-header?})
