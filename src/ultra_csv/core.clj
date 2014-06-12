@@ -117,13 +117,15 @@
   (make-prefs [arg] "generates a CsvPreference object"))
 
 (defn csv-prefs
-  [{:keys [quote-symbol delimiter end-of-lines]
+  [{:keys [quote-symbol delimiter end-of-lines quoted?]
     :or {quote-symbol \"
          end-of-lines "\n"
-         delimiter \,}}]
-  (->
-   (CsvPreference$Builder. quote-symbol (int delimiter) end-of-lines)
-   (.build)))
+         delimiter \,
+         quoted? true}}]
+  (let [quote (if quoted? quote-symbol (int 0))]
+    (->
+     (CsvPreference$Builder. quote (int delimiter) end-of-lines)
+     (.build))))
 
 (extend-protocol Iprefs
   CsvPreference
@@ -248,7 +250,7 @@
             quoted? (is-quoted? lines delimiter)]
         (if (instance? Reader uri)
           (.reset uri))
-        {:delimiter delimiter :fields-schema fields-schema :header has-header?})
+        {:delimiter delimiter :fields-schema fields-schema :header has-header? :quoted? quoted?})
       (finally
         (if-not (instance? Reader uri)
           (.close rdr))))))
@@ -301,6 +303,7 @@
                {guessed-schema :fields-schema
                 guessed-delimiter :delimiter
                 guessed-header :header
+                guessed-quote :quoted?
                 :as analysis} (try
                                 (analyze-csv rdr 100)
                                 (catch Exception e
@@ -331,7 +334,7 @@
                                (merge infered-schema schema)
                                infered-schema)))]
            (merge {:schema full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
-                   :encoding enc :skip-analysis? true :header guessed-header} opts))
+                   :encoding enc :skip-analysis? true :header guessed-header :quoted? guessed-quote} opts))
          (catch Exception e
            (println (format "error while reading: %s" (str e)))
            (throw e))
