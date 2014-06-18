@@ -122,7 +122,7 @@
          end-of-lines "\n"
          delimiter \,
          quoted? true}}]
-  (let [quote (if quoted? quote-symbol (int 0))]
+  (let [quote (if quoted? quote-symbol (char (int 0)))]
     (->
      (CsvPreference$Builder. quote (int delimiter) end-of-lines)
      (.build))))
@@ -336,7 +336,7 @@
            (merge {:schema full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
                    :encoding enc :skip-analysis? true :header guessed-header :quoted? guessed-quote} opts))
          (catch Exception e
-           (println (format "error while reading: %s" (str e)))
+           (println (format "error while reading: %s" (clojure.repl/pst e)))
            (throw e))
          (finally
            (clean-rdr)))))
@@ -357,7 +357,8 @@
            keywordize-keys?]
      :or {header true guess-types? true
           strict? true
-          field-names-fn str/trim}
+          field-names-fn str/trim
+          keywordize-keys? true}
      :as opts}]
   (let [fnames-arr (into-array String (map name field-names))
         ^CsvPreference pref-opts (make-prefs opts)
@@ -375,8 +376,8 @@
                  (read-fn (fn [rdr]
                             (with-open [csv-rdr (CsvMapReader. rdr pref-opts)]
                               (.read csv-rdr fnames-arr)))
-                          (fn [e] 
-                            (read-map e))))]
+                          (fn [e]
+                            (read-map (into {} e)))))]
     res-fn))
 
 (defn read-csv
