@@ -9,7 +9,8 @@
            [java.nio.charset Charset]
            [com.ibm.icu.text CharsetDetector]
            [org.apache.commons.io.input BOMInputStream]
-           [org.apache.commons.io ByteOrderMark]))
+           [org.apache.commons.io ByteOrderMark]
+           [java.text SimpleDateFormat]))
 
 (declare analyze-csv)
 
@@ -53,8 +54,12 @@
       (cons
        (vary-meta (transform-line res) assoc ::csv-reader rdr ::clean-reader clean-rdr)
        (lazy-seq (read-row rdr read-from-csv transform-line clean-rdr limit)))
-      (clean-rdr)
-      )))
+      (clean-rdr))))
+
+(defn make-date-coercer
+  [fmt]
+  (let [formatter (SimpleDateFormat. fmt)]
+    (fn [^String s] (.parse formatter s))))
 
 (defn- greedy-read-fn
   [rdr read-from-csv transform-line clean-rdr limit]
@@ -354,18 +359,19 @@
   [{:keys [preference header field-names field-names-fn schema encoding
            guess-types? strict? counter-step
            silent? limit skip-analysis? nullable-fields?
-           keywordize-keys?]
+           keywordize-keys? coercer]
      :or {header true guess-types? true
           strict? true
           field-names-fn str/trim
-          keywordize-keys? true}
+          keywordize-keys? true
+          coercer {}}
      :as opts}]
   (let [fnames-arr (into-array String (map name field-names))
         ^CsvPreference pref-opts (make-prefs opts)
         read-fn line-read-fn
         vec-output (not (or header field-names))
-        parse-csv (c/coercer schema csv-coercer)
-        read-map (if (and (not vec-output) keywordize-keys?) 
+        parse-csv (c/coercer schema (merge csv-coercer coercer))
+        read-map (if (and (not vec-output) keywordize-keys?)
                    (comp parse-csv keywordize-keys)
                    parse-csv)
         res-fn (if vec-output
@@ -385,12 +391,13 @@
     {:keys [preference header field-names field-names-fn schema encoding
             guess-types? strict? greedy? counter-step
             silent? limit skip-analysis? nullable-fields?
-            keywordize-keys?]
+            keywordize-keys? coercer]
      :or {guess-types? true
           strict? true
           field-names-fn str/trim
           nullable-fields? true
-          keywordize-keys? true}
+          keywordize-keys? true
+          coercer {}}
      :as opts}]
      (let [guess-allowed? (guess-possible? uri)]
        (if (and (or (not skip-analysis?)
@@ -420,7 +427,7 @@
                              (CsvListReader. rdr pref-opts)
                              (CsvMapReader. rdr pref-opts))
                    _ (when header (.getHeader csv-rdr true))]
-               (let [parse-csv (c/coercer schema csv-coercer)
+               (let [parse-csv (c/coercer schema (merge csv-coercer coercer))
                      read-map (if (and (not vec-output) keywordize-keys?)
                                 (comp parse-csv keywordize-keys)
                                 parse-csv)
