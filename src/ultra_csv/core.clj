@@ -57,9 +57,13 @@
       (clean-rdr))))
 
 (defn make-date-coercer
-  [fmt]
-  (let [formatter (SimpleDateFormat. fmt)]
-    (fn [^String s] (.parse formatter s))))
+  ([fmt]
+     (let [formatter (SimpleDateFormat. fmt)]
+       (fn [^String s] (.parse formatter s))))
+  ([fmt timezone]
+     (let [formatter (SimpleDateFormat. fmt)]
+       (.setTimeZone formatter (java.util.TimeZone/getTimeZone timezone))
+       (fn [^String s] (.parse formatter s)))))
 
 (defn- greedy-read-fn
   [rdr read-from-csv transform-line clean-rdr limit]
@@ -281,11 +285,12 @@
                      (f)
                      (catch Exception e
                        (if-not silent?
-                         (println e "EXCEPTION" e))
-                       e))]
-           (if (instance? Exception res)
-             (recur)
-             res)))
+                         (binding [*out* *err*]
+                           (println "Error while reading csv:" e)))))]
+           (if res
+             res
+             ;; read next line if there was an exception
+             (recur))))
        (vary-meta (fn [o n] (merge n o)) m)))))
 
 (defn close!
@@ -323,10 +328,10 @@
                          (CsvListReader. rdr pref-opts)
                          (CsvMapReader. rdr pref-opts))
                fnames (when-not vec-output
-                        (map field-names-fn
-                             (cond
-                              (or header guessed-header) (.getHeader csv-rdr true)
-                              field-names field-names)))
+                        (mapv field-names-fn
+                              (cond
+                               (or header guessed-header) (.getHeader csv-rdr true)
+                               field-names field-names)))
                wrap-types (if nullable-fields? #(s/maybe %) identity)
                wrap-keys (if keywordize-keys? (comp keyword str/trim) str/trim)
                full-specs (if vec-output
@@ -340,9 +345,6 @@
                                infered-schema)))]
            (merge {:schema full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
                    :encoding enc :skip-analysis? true :header guessed-header :quoted? guessed-quote} opts))
-         (catch Exception e
-           (println (format "error while reading: %s" (clojure.repl/pst e)))
-           (throw e))
          (finally
            (clean-rdr)))))
   ([uri] (guess-spec uri {})))
@@ -450,7 +452,6 @@
                   counter-step (wrap-with-counter res-fn counter-step)
                   :default res-fn)))
              (catch Exception e
-               (println (format "error while reading: %s" (str e)))
                (clean-rdr)
                (throw e)))))))
   ([uri] (read-csv uri {})))
