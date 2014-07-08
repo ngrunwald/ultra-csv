@@ -5,11 +5,9 @@
             [schema [core :as s] [coerce :as c]])
   (:import [org.supercsv.io CsvMapReader CsvListReader]
            [org.supercsv.prefs CsvPreference CsvPreference$Builder]
-           [java.io Reader InputStream]
+           [java.io Reader InputStream PushbackInputStream]
            [java.nio.charset Charset]
            [com.ibm.icu.text CharsetDetector]
-           [org.apache.commons.io.input BOMInputStream]
-           [org.apache.commons.io ByteOrderMark]
            [java.text SimpleDateFormat]))
 
 (declare analyze-csv)
@@ -29,22 +27,43 @@
           "utf-8")))
     (catch Exception e "utf-8")))
 
+(def ^:no-doc boms
+  {[0xff 0xfe] [:utf16-le 2]
+   [0xfe 0xff] [:utf16-be 2]
+   [0xef 0xbb 0xbf] [:utf8 3]
+   [0xff 0xfe 0x00 0x00] [:utf32-le 4]
+   [0x00 0x00 0xfe 0xff] [:utf32-be 4]})
+
+(defn skip-bom-from-stream-if-present
+  [stream]
+  (let [pbis (PushbackInputStream. (io/input-stream stream) 4)
+        bom (byte-array 4)]
+    (.read pbis bom)
+    (let [[a b c d :as first-four] (into [] (seq bom))
+          first-two [a b]
+          first-three [a b c]
+          [bom-name bom-size] (or (boms first-two) (boms first-three) (boms first-four))]
+      (if bom-size
+        (let [to-put-back (byte-array (drop bom-size bom))]
+          (.unread pbis to-put-back)
+          pbis)
+        (do
+          (println "NO BOM" (type bom) (seq bom))
+          (.unread pbis bom)
+          pbis)))))
+
 (defn ^:no-doc get-reader
   ([src encoding]
      (if (instance? java.io.Reader src)
        [src (fn [] nil) encoding]
-       (let [boms (into-array ByteOrderMark 
-                              [ByteOrderMark/UTF_16LE ByteOrderMark/UTF_16BE
-                               ByteOrderMark/UTF_32LE ByteOrderMark/UTF_32BE
-                               ByteOrderMark/UTF_8])]
-         (let [istream (io/input-stream src)
-               enc (or encoding (guess-charset istream))
-               rdr (io/reader (BOMInputStream. istream boms) :encoding enc)]
-           [rdr
-            (fn [] (do (.close rdr)
-                       (.close istream)
-                       true))
-            enc]))))
+       (let [istream (io/input-stream src)
+             enc (or encoding (guess-charset istream))
+             rdr (io/reader istream :encoding enc)]
+         [rdr
+          (fn [] (do (.close rdr)
+                     (.close istream)
+                     true))
+          enc])))
   ([src] (get-reader src nil)))
 
 (defn ^:no-doc read-row
@@ -207,6 +226,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
 
 (defn ^:no-doc is-header?
   [line schema]
+  (println line schema)
   (if (> (count (filter nil? line)) 0)
     false
     (let [full-schema (mapv #(s/one % "toto") schema)
@@ -238,6 +258,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
                         (recur (conj ls line))
                         ls)
                       ls))
+            _ (println (first lines))
             possible-header (first lines)
             delimiter (guess-delimiter lines)
             seg-lines (parse-fields (rest lines) delimiter)
@@ -427,7 +448,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
     with each call, else returns a lazy seq of lines. Defaults to *false*
  +  **strict?**: Whether to throw exception on reading of validation error, or just skip it.
     Defaults to *true*
- +  *silent?*: Whether there should be error messages emitted on *stderr* when skipping Exceptions.
+ +  **silent?**: Whether there should be error messages emitted on *stderr* when skipping Exceptions.
     Defaults to *false*
  +  **limit**: Closes and cleans the io ressources after reading this many lines. Useful for
     sampling
