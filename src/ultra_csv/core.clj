@@ -14,9 +14,9 @@
 
 (declare analyze-csv)
 
-(def available-charsets (into #{} (.keySet (Charset/availableCharsets))))
+(def ^:no-doc available-charsets (into #{} (.keySet (Charset/availableCharsets))))
 
-(defn guess-charset
+(defn ^:no-doc guess-charset
   [^InputStream is]
   (try
     (let [^CharsetDetector detector (CharsetDetector.)]
@@ -29,7 +29,7 @@
           "utf-8")))
     (catch Exception e "utf-8")))
 
-(defn get-reader
+(defn ^:no-doc get-reader
   ([src encoding]
      (if (instance? java.io.Reader src)
        [src (fn [] nil) encoding]
@@ -47,7 +47,7 @@
             enc]))))
   ([src] (get-reader src nil)))
 
-(defn- read-row
+(defn ^:no-doc read-row
   [rdr read-from-csv transform-line clean-rdr limit]
   (let [res (read-from-csv rdr)]
     (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
@@ -57,6 +57,10 @@
       (clean-rdr))))
 
 (defn make-date-coercer
+  "Makes a date coercer to use with the *coercer* option of [[read-csv]].
+Given a formatter *String* and an optional timezonr *String*, this will return
+a ready to use function. Details on the format can be found at
+http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
   ([fmt]
      (let [formatter (SimpleDateFormat. fmt)]
        (fn [^String s] (.parse formatter s))))
@@ -65,7 +69,7 @@
        (.setTimeZone formatter (java.util.TimeZone/getTimeZone timezone))
        (fn [^String s] (.parse formatter s)))))
 
-(defn- greedy-read-fn
+(defn ^:no-doc greedy-read-fn
   [rdr read-from-csv transform-line clean-rdr limit]
   (->
    (fn []
@@ -75,7 +79,7 @@
          (clean-rdr))))
    (vary-meta assoc ::csv-reader rdr ::clean-reader clean-rdr)))
 
-(defn- line-read-fn
+(defn ^:no-doc line-read-fn
   [read-from-csv transform-line]
   (fn [src]
     (let [[rdr close-rdr] (if (instance? java.io.Reader src)
@@ -87,7 +91,7 @@
         (close-rdr)
         entity))))
 
-(defn find-char-pos
+(defn ^:no-doc find-char-pos
   [line char]
   (loop [found []
          cur 0]
@@ -96,7 +100,7 @@
         (recur (conj found pos) (inc pos))
         found))))
 
-(defn guess-delimiter
+(defn ^:no-doc guess-delimiter
   [lines]
   (let [all-dels (for [line lines
                        :let [clean-line (str/replace line #"\"[^\"]*\"" "")]]
@@ -105,7 +109,7 @@
                           (fn [character]
                             [character
                              (count (find-char-pos clean-line character))])
-                          [\, \; \space \tab])))
+                          [\, \; \space \tab \|])))
         freqs (first all-dels)
         report (loop [todo all-dels
                       candidates (into {}
@@ -122,10 +126,7 @@
     (when (or (< fv sv) (nil? sv))
       fc)))
 
-(defprotocol Iprefs
-  (make-prefs [arg] "generates a CsvPreference object"))
-
-(defn csv-prefs
+(defn ^:no-doc csv-prefs
   [{:keys [quote-symbol delimiter end-of-lines quoted?]
     :or {quote-symbol \"
          end-of-lines "\n"
@@ -136,24 +137,10 @@
      (CsvPreference$Builder. quote (int delimiter) end-of-lines)
      (.build))))
 
-(extend-protocol Iprefs
-  CsvPreference
-  (make-prefs [this] this)
-  clojure.lang.IPersistentMap
-  (make-prefs [this] (csv-prefs this))
-  clojure.lang.Keyword
-  (make-prefs [this]
-    (case this
-      :standard CsvPreference/STANDARD_PREFERENCE
-      :excel CsvPreference/EXCEL_PREFERENCE
-      :excel-north-europe CsvPreference/EXCEL_NORTH_EUROPE_PREFERENCE
-      :tab CsvPreference/TAB_PREFERENCE
-      (throw (IllegalArgumentException. (format "keyword [ %s ] is not recognised" this))))))
-
-(defn parse-fields
+(defn ^:no-doc parse-fields
   [lines delimiter]
   (let [txt (str/join "\n" lines)
-        prefs (make-prefs {:delimiter delimiter})]
+        prefs (csv-prefs {:delimiter delimiter})]
     (with-open [rdr (java.io.StringReader. txt)]
       (let [listr (CsvListReader. rdr prefs)
             seg-lines (loop [out []]
@@ -163,42 +150,42 @@
         (.close listr)
         seg-lines))))
 
-(defn int-string?
+(defn ^:no-doc int-string?
   [s]
   (if (re-matches #"-?\d+" s)
     true false))
 
-(defn double-string?
+(defn ^:no-doc double-string?
   [s]
   (if (re-matches #"-?\d+([\.,]\d+)?" s)
     true false))
 
-(def Num java.lang.Double)
+(def ^:no-doc Num java.lang.Double)
 
-(def known-types
+(def ^:no-doc known-types
   [[s/Int int-string?]
    [Num double-string?]])
 
-(def csv-coercer
+(def ^:no-doc csv-coercer
   {s/Int (fn [s] (Long/parseLong s))
    Num (fn [s] (Double/parseDouble s))
    s/Keyword (fn [s] (keyword s))})
 
-(defn take-higher
+(defn ^:no-doc take-higher
   [cands]
   (if (empty? cands)
     s/Str
     (let [lookfor (into #{} cands)]
       (first (remove nil? (filter #(contains? lookfor %) (map first known-types)))))))
 
-(defn keywordize-keys
+(defn ^:no-doc keywordize-keys
   [hm]
   (persistent!
    (reduce (fn [acc [k v]]
              (assoc! acc (keyword k) v))
            (transient {}) hm)))
 
-(defn guess-types
+(defn ^:no-doc guess-types
   [lines]
   (for [offset (range (count (first lines)))]
     (loop [todo lines
@@ -218,7 +205,7 @@
           (take-higher (keys candidates))
           s/Str)))))
 
-(defn is-header?
+(defn ^:no-doc is-header?
   [line schema]
   (if (> (count (filter nil? line)) 0)
     false
@@ -231,13 +218,13 @@
         (catch Exception e
           true)))))
 
-(defn is-quoted?
+(defn ^:no-doc is-quoted?
   [lines delimiter]
   (let [quoted-delim (java.util.regex.Pattern/quote (str delimiter))
         regexp (re-pattern (str (format "\"%s|%s\"" quoted-delim quoted-delim)))]
     (every? #(re-find regexp %) (take 10 lines))))
 
-(defn analyze-csv
+(defn ^:no-doc analyze-csv
   [uri lookahead]
   (when (instance? Reader uri)
     (if (.markSupported uri)
@@ -264,7 +251,7 @@
         (if-not (instance? Reader uri)
           (.close rdr))))))
 
-(defn wrap-with-counter
+(defn ^:no-doc wrap-with-counter
   [f step]
   (let [total (atom 0)]
     (fn []
@@ -273,7 +260,7 @@
         (println "Processed" @total "lines"))
       (f))))
 
-(defn make-read-fn
+(defn ^:no-doc make-read-fn
   [f {:keys [strict? silent?]
       :or {strict? true}}]
   (if strict?
@@ -294,18 +281,47 @@
        (vary-meta (fn [o n] (merge n o)) m)))))
 
 (defn close!
+  "Closes and cleans the io ressources used. Can be used on a greedy generator or any
+line of a lazy seqs of results"
   [f]
   (when-let [clean (get (meta f) ::clean-reader)]
     (clean)))
 
 (defn guess-spec
+  "This function takes a source of csv lines (either a *Reader*, *InputStream* or *String* URI)
+and tries to guess the specs necessary to parse it. You can use the option map to specify some values
+for the spec. Recognised options are:
+
+ *Analysis options*
+
+ +  **header?**: Whether the file as a header on the first line
+ +  **sample-size**: number of lines on which heuristics are applied. Defaults to *100*
+ +  **guess-types?**: Whether to try to guess types for each field
+
+ *File options*
+
+ +  **encoding**: Character encoding for the file
+
+ *Processing options*
+
+ +  **field-names-fn**: fn to apply to the name of each field. Defaults to trim function
+ +  **nullable-fields?**: Whether the values are optionals. Defaults to *true*
+ +  **keywordize-keys?**: Whether to turn fields into keywords. Defaults to *true*
+
+ *Format options*
+
+ +  **delimiter**: Character used as a delimiter
+ +  **schema**: Schema to validate and coerce output
+ +  **field-names**: Names for the csv fields, in order"
   ([uri
-    {:keys [preference header field-names field-names-fn schema encoding
-            guess-types? delimiter nullable-fields? keywordize-keys?]
+    {:keys [header? field-names field-names-fn schema encoding
+            guess-types? delimiter nullable-fields? keywordize-keys?
+            sample-size]
      :or {guess-types? true
           field-names-fn str/trim
           nullable-fields? true
-          keywordize-keys? true}
+          keywordize-keys? true
+          sample-size 100}
      :as opts}]
      (let [[rdr clean-rdr enc] (get-reader uri encoding)]
        (try
@@ -315,22 +331,19 @@
                 guessed-header :header
                 guessed-quote :quoted?
                 :as analysis} (try
-                                (analyze-csv rdr 100)
+                                (analyze-csv rdr sample-size)
                                 (catch Exception e
                                   (throw e)
                                   {}))
-                ^CsvPreference pref-opts (make-prefs (merge
-                                                      analysis
-                                                      (get opts :preference
-                                                           (assoc opts :uri uri))))
-               vec-output (not (or (get opts :header guessed-header) field-names))
+                ^CsvPreference pref-opts (csv-prefs (merge analysis opts))
+               vec-output (not (or (get opts :header? guessed-header) field-names))
                csv-rdr (if vec-output
                          (CsvListReader. rdr pref-opts)
                          (CsvMapReader. rdr pref-opts))
                fnames (when-not vec-output
                         (mapv field-names-fn
                               (cond
-                               (or header guessed-header) (.getHeader csv-rdr true)
+                               (or header? guessed-header) (.getHeader csv-rdr true)
                                field-names field-names)))
                wrap-types (if nullable-fields? #(s/maybe %) identity)
                wrap-keys (if keywordize-keys? (comp keyword str/trim) str/trim)
@@ -344,12 +357,12 @@
                                (merge infered-schema schema)
                                infered-schema)))]
            (merge {:schema full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
-                   :encoding enc :skip-analysis? true :header guessed-header :quoted? guessed-quote} opts))
+                   :encoding enc :skip-analysis? true :header? guessed-header :quoted? guessed-quote} opts))
          (finally
            (clean-rdr)))))
   ([uri] (guess-spec uri {})))
 
-(defn guess-possible?
+(defn ^:no-doc guess-possible?
   [rdr]
   (try
     (if-not (instance? java.io.Reader rdr)
@@ -358,21 +371,25 @@
     (catch Exception _ false)))
 
 (defn csv-line-reader
-  [{:keys [preference header field-names field-names-fn schema encoding
+  "This function returns a reader function that accepts inputs of one *String* line at a time.
+It takes the same options as [[read-csv]] minus some processing and the file and analysis options."
+  [{:keys [header? field-names field-names-fn schema
            guess-types? strict? counter-step
-           silent? limit skip-analysis? nullable-fields?
+           silent? limit nullable-fields?
            keywordize-keys? coercer]
-     :or {header true guess-types? true
+     :or {guess-types? true
           strict? true
           field-names-fn str/trim
           keywordize-keys? true
           coercer {}}
      :as opts}]
   (let [fnames-arr (into-array String (map name field-names))
-        ^CsvPreference pref-opts (make-prefs opts)
+        ^CsvPreference pref-opts (csv-prefs opts)
         read-fn line-read-fn
-        vec-output (not (or header field-names))
-        parse-csv (c/coercer schema (merge csv-coercer coercer))
+        vec-output (not (or header? field-names))
+        parse-csv (if (empty? schema)
+                    identity
+                    (c/coercer schema (merge csv-coercer coercer)))
         read-map (if (and (not vec-output) keywordize-keys?)
                    (comp parse-csv keywordize-keys)
                    parse-csv)
@@ -389,8 +406,48 @@
     res-fn))
 
 (defn read-csv
+  "This function takes a source of csv lines (either a *Reader*, *InputStream* or *String* URI)
+ and returns the parsed results. If headers are found on the file or *field-names* where given
+ as options, it will return a collection of one map per line, associating each field name with
+ its value. If not,   one vector will be returned for each line, in order.
+
+ You can use the option map to specify some values for the spec. Recognised options are:
+
+ *Analysis options*
+
+ +  **header?**: Whether the file as a header on the first line
+ +  **sample-size**: number of lines on which heuristics are applied. Defaults to *100*
+ +  **guess-types?**: Whether to try to guess types for each field. Defaults tu *true*
+ +  **skip-analysis?**: Whether to completely bypass analysis and only use spec
+    Defaults to *false*
+
+ *Processing options*
+
+ +  **greedy?**: If true returns a function that can be used as a generator, returning one line
+    with each call, else returns a lazy seq of lines. Defaults to *false*
+ +  **strict?**: Whether to throw exception on reading of validation error, or just skip it.
+    Defaults to *true*
+ +  *silent?*: Whether there should be error messages emitted on *stderr* when skipping Exceptions.
+    Defaults to *false*
+ +  **limit**: Closes and cleans the io ressources after reading this many lines. Useful for
+    sampling
+ +  **field-names-fn**: fn to apply to the name of each field. Can be used to sanitize header
+    names. Defaults to trim function
+ +  **nullable-fields?**: Whether the values are optionals. Defaults to *true*
+ +  **keywordize-keys?**: Whether to turn fields into keywords. Defaults to *true*
+
+ *Format options*
+
+ +  **delimiter**: Character used as a delimiter
+ +  **schema**: Schema to validate and coerce output
+ +  **coercer**: A map associating a type as key with a function from *String* to that type.
+    For example:
+
+        {:coercer {java.util.Date (make-date-coercer \"yyyyMMdd\")}}
+
+ +  **field-names**: Names for the csv fields, in order"
   ([uri
-    {:keys [preference header field-names field-names-fn schema encoding
+    {:keys [header? field-names field-names-fn schema encoding
             guess-types? strict? greedy? counter-step
             silent? limit skip-analysis? nullable-fields?
             keywordize-keys? coercer]
@@ -405,11 +462,11 @@
        (if (and (or (not skip-analysis?)
                     guess-types)
                 (not guess-allowed?))
-         (throw (ex-info (format "Input of class %s cannot be reset, cannot guess its specs" (class uri))))
+         (throw (ex-info (format "Input of Class %s cannot be reset, cannot guess its specs" (class uri))))
          (let [[rdr clean-rdr enc] (get-reader uri encoding)]
            (try
              (let [resettable? (.markSupported rdr)
-                   {:keys [preference header field-names field-names-fn schema encoding
+                   {:keys [header? field-names field-names-fn schema encoding
                            guess-types? strict? greedy? counter-step
                            silent? limit skip-analysis?]
                     :or {guess-types? true
@@ -420,16 +477,15 @@
                                      (guess-spec uri opts))
                    fnames-arr (into-array String (map name field-names))
                    read-fn (if greedy? greedy-read-fn read-row)
-                   vec-output (not (or header field-names))
-                   ^CsvPreference pref-opts (make-prefs (merge
-                                                         full-spec
-                                                         (get opts :preference
-                                                              (assoc opts :uri uri))))
+                   vec-output (not (or header? field-names))
+                   ^CsvPreference pref-opts (csv-prefs (merge full-spec opts))
                    csv-rdr (if vec-output
                              (CsvListReader. rdr pref-opts)
                              (CsvMapReader. rdr pref-opts))
-                   _ (when header (.getHeader csv-rdr true))]
-               (let [parse-csv (c/coercer schema (merge csv-coercer coercer))
+                   _ (when header? (.getHeader csv-rdr true))]
+               (let [parse-csv (if (empty? schema)
+                                 identity
+                                 (c/coercer schema (merge csv-coercer coercer)))
                      read-map (if (and (not vec-output) keywordize-keys?)
                                 (comp parse-csv keywordize-keys)
                                 parse-csv)

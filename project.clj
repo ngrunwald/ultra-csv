@@ -7,4 +7,9 @@
                  [net.sf.supercsv/super-csv "2.2.0"]
                  [com.ibm.icu/icu4j "53.1"]
                  [commons-io "2.4"]
-                 [prismatic/schema "0.2.4"]])
+                 [prismatic/schema "0.2.4"]]
+  :plugins [[codox "0.8.10"]]
+  :codox {:src-dir-uri "http://github.com/ngrunwald/ultra-csv/blob/master/"
+          :src-linenum-anchor-prefix "L"
+          :defaults {:doc/format :markdown}}
+)
