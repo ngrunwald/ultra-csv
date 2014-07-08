@@ -36,7 +36,7 @@
 
 (defn skip-bom-from-stream-if-present
   [stream]
-  (let [pbis (PushbackInputStream. (io/input-stream stream) 4)
+  (let [pbis (PushbackInputStream. stream 4)
         bom (byte-array 4)]
     (.read pbis bom)
     (let [[a b c d :as first-four] (into [] (seq bom))
@@ -46,17 +46,16 @@
       (if bom-size
         (let [to-put-back (byte-array (drop bom-size bom))]
           (.unread pbis to-put-back)
-          pbis)
+          (io/input-stream pbis))
         (do
-          (println "NO BOM" (type bom) (seq bom))
           (.unread pbis bom)
-          pbis)))))
+          (io/input-stream pbis))))))
 
 (defn ^:no-doc get-reader
   ([src encoding]
      (if (instance? java.io.Reader src)
        [src (fn [] nil) encoding]
-       (let [istream (io/input-stream src)
+       (let [istream (skip-bom-from-stream-if-present (io/input-stream src))
              enc (or encoding (guess-charset istream))
              rdr (io/reader istream :encoding enc)]
          [rdr
@@ -226,7 +225,6 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
 
 (defn ^:no-doc is-header?
   [line schema]
-  (println line schema)
   (if (> (count (filter nil? line)) 0)
     false
     (let [full-schema (mapv #(s/one % "toto") schema)
@@ -258,7 +256,6 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
                         (recur (conj ls line))
                         ls)
                       ls))
-            _ (println (first lines))
             possible-header (first lines)
             delimiter (guess-delimiter lines)
             seg-lines (parse-fields (rest lines) delimiter)
@@ -397,12 +394,12 @@ It takes the same options as [[read-csv]] minus some processing and the file and
   [{:keys [header? field-names field-names-fn schema
            guess-types? strict? counter-step
            silent? limit nullable-fields?
-           keywordize-keys? coercer]
+           keywordize-keys? coercers]
      :or {guess-types? true
           strict? true
           field-names-fn str/trim
           keywordize-keys? true
-          coercer {}}
+          coercers {}}
      :as opts}]
   (let [fnames-arr (into-array String (map name field-names))
         ^CsvPreference pref-opts (csv-prefs opts)
@@ -410,7 +407,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
         vec-output (not (or header? field-names))
         parse-csv (if (empty? schema)
                     identity
-                    (c/coercer schema (merge csv-coercer coercer)))
+                    (c/coercer schema (merge csv-coercer coercers)))
         read-map (if (and (not vec-output) keywordize-keys?)
                    (comp parse-csv keywordize-keys)
                    parse-csv)
@@ -461,23 +458,23 @@ It takes the same options as [[read-csv]] minus some processing and the file and
 
  +  **delimiter**: Character used as a delimiter
  +  **schema**: Schema to validate and coerce output
- +  **coercer**: A map associating a type as key with a function from *String* to that type.
+ +  **coercers**: A map associating a type as key with a function from *String* to that type.
     For example:
 
-        {:coercer {java.util.Date (make-date-coercer \"yyyyMMdd\")}}
+        {:coercers {java.util.Date (make-date-coercer \"yyyyMMdd\")}}
 
  +  **field-names**: Names for the csv fields, in order"
   ([uri
     {:keys [header? field-names field-names-fn schema encoding
             guess-types? strict? greedy? counter-step
             silent? limit skip-analysis? nullable-fields?
-            keywordize-keys? coercer]
+            keywordize-keys? coercers]
      :or {guess-types? true
           strict? true
           field-names-fn str/trim
           nullable-fields? true
           keywordize-keys? true
-          coercer {}}
+          coercers {}}
      :as opts}]
      (let [guess-allowed? (guess-possible? uri)]
        (if (and (or (not skip-analysis?)
@@ -506,7 +503,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                    _ (when header? (.getHeader csv-rdr true))]
                (let [parse-csv (if (empty? schema)
                                  identity
-                                 (c/coercer schema (merge csv-coercer coercer)))
+                                 (c/coercer schema (merge csv-coercer coercers)))
                      read-map (if (and (not vec-output) keywordize-keys?)
                                 (comp parse-csv keywordize-keys)
                                 parse-csv)
