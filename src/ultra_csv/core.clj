@@ -34,7 +34,7 @@
    [0xff 0xfe 0x00 0x00] [:utf32-le 4]
    [0x00 0x00 0xfe 0xff] [:utf32-be 4]})
 
-(defn skip-bom-from-stream-if-present
+(defn ^:no-doc skip-bom-from-stream-if-present
   [stream]
   (let [pbis (PushbackInputStream. stream 4)
         bom (byte-array 4)]
