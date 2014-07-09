@@ -28,11 +28,11 @@
     (catch Exception e "utf-8")))
 
 (def ^:no-doc boms
-  {[0xff 0xfe] [:utf16-le 2]
-   [0xfe 0xff] [:utf16-be 2]
-   [0xef 0xbb 0xbf] [:utf8 3]
-   [0xff 0xfe 0x00 0x00] [:utf32-le 4]
-   [0x00 0x00 0xfe 0xff] [:utf32-be 4]})
+  {[(byte -1) (byte -2)] [:utf16-le 2]
+   [(byte -2) (byte -1)] [:utf16-be 2]
+   [(byte -2) (byte -69) (byte -65)] [:utf8 3]
+   [(byte -1) (byte -2) (byte 0) (byte 0)] [:utf32-le 4]
+   [(byte 0) (byte 0) (byte -2) (byte -1)] [:utf32-be 4]})
 
 (defn ^:no-doc skip-bom-from-stream-if-present
   [stream]
