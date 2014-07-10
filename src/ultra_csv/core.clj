@@ -251,7 +251,8 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
   [lines delimiter]
   (let [quoted-delim (java.util.regex.Pattern/quote (str delimiter))
         regexp (re-pattern (str (format "\"%s|%s\"" quoted-delim quoted-delim)))]
-    (every? #(re-find regexp %) (take 10 lines))))
+    ;; skip the first line in case it's a header
+    (every? #(re-find regexp %) (take 10 (rest lines)))))
 
 (defn ^:no-doc analyze-csv
   [uri lookahead]
