@@ -1,9 +1,20 @@
 # ultra-csv
 
-A smart reader/writer for CSV files. Right now only reading is implemented.
+A smart reader for CSV files.
 
-**HIGHLY EXPERIMENTAL**
-**USE AT YOUR OWN RISK**
+## Features
+
+  - Smart statistical heuristics to guess pretty much anything about
+  your csv file, from delimiter to quotes and whether a header is present
+  - Handles for you the boring but dangerous stuff, like encoding detection
+  and bom skipping if present, but also embedded new lines and quote escaping
+  - Uses Prismatic Schema to both coerce the numerical values that have been
+  recognised. The types and coercions can be extended by the user to dates, phones, etc
+  and the input can be validated
+  - Designed to be both very easy to use in an exploratory way to get a quick feel of the
+  data, and then be put into production with almost the same code
+  - Special tools to use the parsing features of *ultra-csv* inside environments
+  where you access the data line by line as Strings, like *Hadoop*
 
 ## Usage
 
