@@ -10,5 +10,4 @@
   :plugins [[codox "0.8.10"]]
   :codox {:src-dir-uri "http://github.com/ngrunwald/ultra-csv/blob/master/"
           :src-linenum-anchor-prefix "L"
-          :defaults {:doc/format :markdown}}
-)
+          :defaults {:doc/format :markdown}})

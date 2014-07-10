@@ -3,9 +3,9 @@
             [clojure.string :as str]
             [clojure.walk :as walk]
             [schema [core :as s] [coerce :as c]])
-  (:import [org.supercsv.io CsvMapReader CsvListReader]
+  (:import [org.supercsv.io CsvMapReader CsvListReader AbstractCsvReader]
            [org.supercsv.prefs CsvPreference CsvPreference$Builder]
-           [java.io Reader InputStream PushbackInputStream]
+           [java.io Reader BufferedReader InputStream PushbackInputStream]
            [java.nio.charset Charset]
            [com.ibm.icu.text CharsetDetector]
            [java.text SimpleDateFormat]))
@@ -63,7 +63,7 @@
        [src (fn [] nil) encoding nil]
        (let [raw-stream (io/input-stream src)
              enc (or encoding (guess-charset raw-stream))
-             [istream bom-name] (if (nil? bom)
+             [^InputStream istream bom-name] (if (nil? bom)
                                   (skip-bom-from-stream-if-present raw-stream)
                                   [(.read raw-stream (byte-array (get bom-sizes bom 0))) bom])
              rdr (io/reader istream :encoding enc)]
@@ -77,7 +77,7 @@
   ([src] (get-reader src nil nil)))
 
 (defn ^:no-doc read-row
-  [rdr read-from-csv transform-line clean-rdr limit]
+  [^AbstractCsvReader rdr read-from-csv transform-line clean-rdr limit]
   (let [res (read-from-csv rdr)]
     (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
       (cons
@@ -99,7 +99,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
        (fn [^String s] (.parse formatter s)))))
 
 (defn ^:no-doc greedy-read-fn
-  [rdr read-from-csv transform-line clean-rdr limit]
+  [^AbstractCsvReader rdr read-from-csv transform-line clean-rdr limit]
   (->
    (fn []
      (let [res (read-from-csv rdr)]
@@ -121,7 +121,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
         entity))))
 
 (defn ^:no-doc find-char-pos
-  [line char]
+  [^String line char]
   (loop [found []
          cur 0]
     (let [pos (.indexOf line (int char) cur)]
@@ -156,6 +156,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
       fc)))
 
 (defn ^:no-doc csv-prefs
+  ^CsvPreference
   [{:keys [quote-symbol delimiter end-of-lines quoted?]
     :or {quote-symbol \"
          end-of-lines "\n"
@@ -257,10 +258,11 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
 (defn ^:no-doc analyze-csv
   [uri lookahead]
   (when (instance? Reader uri)
-    (if (.markSupported uri)
-      (.mark uri 1000000)
-      (throw (Exception. "Cannot analyze csv from unmarkable reader"))))
-  (let [rdr (io/reader uri)]
+    (let [^Reader rdr uri]
+      (if (.markSupported rdr)
+       (.mark rdr 1000000)
+       (throw (Exception. "Cannot analyze csv from unmarkable reader")))))
+  (let [^BufferedReader rdr (io/reader uri)]
     (try
       (let [lines (loop [ls []]
                     (if-let [line (.readLine rdr)]
@@ -275,7 +277,8 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
             has-header? (is-header? (first (parse-fields [possible-header] delimiter)) fields-schema)
             quoted? (is-quoted? lines delimiter)]
         (if (instance? Reader uri)
-          (.reset uri))
+          (let [^Reader typed-rdr uri]
+            (.reset typed-rdr)))
         {:delimiter delimiter :fields-schema fields-schema :header has-header? :quoted? quoted?})
       (finally
         (if-not (instance? Reader uri)
@@ -353,7 +356,7 @@ for the spec. Recognised options are:
           keywordize-keys? true
           sample-size 100}
      :as opts}]
-     (let [[rdr clean-rdr enc bom-name] (get-reader uri encoding bom)]
+     (let [[^Reader rdr clean-rdr enc bom-name] (get-reader uri encoding bom)]
        (try
          (let [resettable? (.markSupported rdr)
                {guessed-schema :fields-schema
@@ -367,9 +370,9 @@ for the spec. Recognised options are:
                                   {}))
                 ^CsvPreference pref-opts (csv-prefs (merge analysis opts))
                vec-output (not (or (get opts :header? guessed-header) field-names))
-               csv-rdr (if vec-output
-                         (CsvListReader. rdr pref-opts)
-                         (CsvMapReader. rdr pref-opts))
+               ^AbstractCsvReader csv-rdr (if vec-output
+                                            (CsvListReader. rdr pref-opts)
+                                            (CsvMapReader. rdr pref-opts))
                fnames (when-not vec-output
                         (mapv field-names-fn
                               (cond
@@ -396,8 +399,9 @@ for the spec. Recognised options are:
   [rdr]
   (try
     (if-not (instance? java.io.Reader rdr)
-     true
-     (.markSupported rdr))
+      true
+      (let [^Reader typed-rdr rdr]
+        (.markSupported typed-rdr)))
     (catch Exception _ false)))
 
 (defn csv-line-reader
@@ -414,7 +418,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
           coercers {}}
      :as opts}]
   (let [fnames-arr (into-array String (map name field-names))
-        ^CsvPreference pref-opts (csv-prefs opts)
+        pref-opts (csv-prefs opts)
         read-fn line-read-fn
         vec-output (not (or header? field-names))
         parse-csv (if (empty? schema)
@@ -424,11 +428,11 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                    (comp parse-csv keywordize-keys)
                    parse-csv)
         res-fn (if vec-output
-                 (read-fn (fn [rdr]
+                 (read-fn (fn [^Reader rdr]
                             (with-open [csv-rdr (CsvListReader. rdr pref-opts)]
                               (.read csv-rdr)))
                           (fn [e] (parse-csv (into [] e))))
-                 (read-fn (fn [rdr]
+                 (read-fn (fn [^Reader rdr]
                             (with-open [csv-rdr (CsvMapReader. rdr pref-opts)]
                               (.read csv-rdr fnames-arr)))
                           (fn [e]
@@ -493,7 +497,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                     guess-types)
                 (not guess-allowed?))
          (throw (ex-info (format "Input of Class %s cannot be reset, cannot guess its specs" (class uri))))
-         (let [[rdr clean-rdr enc] (get-reader uri encoding bom)]
+         (let [[^Reader rdr clean-rdr enc] (get-reader uri encoding bom)]
            (try
              (let [resettable? (.markSupported rdr)
                    {:keys [header? field-names field-names-fn schema encoding
@@ -509,9 +513,9 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                    read-fn (if greedy? greedy-read-fn read-row)
                    vec-output (not (or header? field-names))
                    ^CsvPreference pref-opts (csv-prefs (merge full-spec opts))
-                   csv-rdr (if vec-output
-                             (CsvListReader. rdr pref-opts)
-                             (CsvMapReader. rdr pref-opts))
+                   ^AbstractCsvReader csv-rdr (if vec-output
+                                                (CsvListReader. rdr pref-opts)
+                                                (CsvMapReader. rdr pref-opts))
                    _ (when header? (.getHeader csv-rdr true))]
                (let [parse-csv (if (empty? schema)
                                  identity
@@ -521,14 +525,14 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                                 parse-csv)
                      res-fn (if vec-output
                               (read-fn csv-rdr
-                                       (make-read-fn #(.read %)
+                                       (make-read-fn (fn [^CsvListReader rdr] (.read rdr))
                                                      {:strict? strict?
                                                       :silent? silent?})
                                        (fn [e] (parse-csv (into [] e)))
                                        clean-rdr
                                        limit)
                               (read-fn csv-rdr
-                                       (make-read-fn #(.read % fnames-arr)
+                                       (make-read-fn (fn [^CsvMapReader rdr] (.read rdr fnames-arr))
                                                      {:strict? strict?
                                                       :silent? silent?})
                                        (fn [e] (read-map e))
