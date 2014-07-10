@@ -34,6 +34,12 @@
    [(byte -1) (byte -2) (byte 0) (byte 0)] [:utf32-le 4]
    [(byte 0) (byte 0) (byte -2) (byte -1)] [:utf32-be 4]})
 
+(def ^:no-doc bom-sizes
+  (reduce (fn
+            [acc [_ [bom-name bom-size]]]
+            (assoc acc bom-name bom-size))
+          {:none 0} boms))
+
 (defn ^:no-doc skip-bom-from-stream-if-present
   [stream]
   (let [pbis (PushbackInputStream. stream 4)
@@ -46,24 +52,29 @@
       (if bom-size
         (let [to-put-back (byte-array (drop bom-size bom))]
           (.unread pbis to-put-back)
-          (io/input-stream pbis))
+          [(io/input-stream pbis) bom-name])
         (do
           (.unread pbis bom)
-          (io/input-stream pbis))))))
+          [(io/input-stream pbis) :none])))))
 
 (defn ^:no-doc get-reader
-  ([src encoding]
+  ([src encoding bom]
      (if (instance? java.io.Reader src)
-       [src (fn [] nil) encoding]
-       (let [istream (skip-bom-from-stream-if-present (io/input-stream src))
-             enc (or encoding (guess-charset istream))
+       [src (fn [] nil) encoding nil]
+       (let [raw-stream (io/input-stream src)
+             enc (or encoding (guess-charset raw-stream))
+             [istream bom-name] (if (nil? bom)
+                                  (skip-bom-from-stream-if-present raw-stream)
+                                  [(.read raw-stream (byte-array (get bom-sizes bom 0))) bom])
              rdr (io/reader istream :encoding enc)]
          [rdr
           (fn [] (do (.close rdr)
                      (.close istream)
                      true))
-          enc])))
-  ([src] (get-reader src nil)))
+          enc
+          bom-name])))
+  ([src encoding] (get-reader src encoding nil))
+  ([src] (get-reader src nil nil)))
 
 (defn ^:no-doc read-row
   [rdr read-from-csv transform-line clean-rdr limit]
@@ -334,14 +345,14 @@ for the spec. Recognised options are:
   ([uri
     {:keys [header? field-names field-names-fn schema encoding
             guess-types? delimiter nullable-fields? keywordize-keys?
-            sample-size]
+            sample-size bom]
      :or {guess-types? true
           field-names-fn str/trim
           nullable-fields? true
           keywordize-keys? true
           sample-size 100}
      :as opts}]
-     (let [[rdr clean-rdr enc] (get-reader uri encoding)]
+     (let [[rdr clean-rdr enc bom-name] (get-reader uri encoding bom)]
        (try
          (let [resettable? (.markSupported rdr)
                {guessed-schema :fields-schema
@@ -375,7 +386,7 @@ for the spec. Recognised options are:
                                (merge infered-schema schema)
                                infered-schema)))]
            (merge {:schema full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
-                   :encoding enc :skip-analysis? true :header? guessed-header :quoted? guessed-quote} opts))
+                   :encoding enc :skip-analysis? true :header? guessed-header :quoted? guessed-quote :bom bom-name} opts))
          (finally
            (clean-rdr)))))
   ([uri] (guess-spec uri {})))
@@ -468,7 +479,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
     {:keys [header? field-names field-names-fn schema encoding
             guess-types? strict? greedy? counter-step
             silent? limit skip-analysis? nullable-fields?
-            keywordize-keys? coercers]
+            keywordize-keys? coercers bom]
      :or {guess-types? true
           strict? true
           field-names-fn str/trim
@@ -481,7 +492,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                     guess-types)
                 (not guess-allowed?))
          (throw (ex-info (format "Input of Class %s cannot be reset, cannot guess its specs" (class uri))))
-         (let [[rdr clean-rdr enc] (get-reader uri encoding)]
+         (let [[rdr clean-rdr enc] (get-reader uri encoding bom)]
            (try
              (let [resettable? (.markSupported rdr)
                    {:keys [header? field-names field-names-fn schema encoding
