@@ -68,9 +68,10 @@
                                   [(.read raw-stream (byte-array (get bom-sizes bom 0))) bom])
              rdr (io/reader istream :encoding enc)]
          [rdr
-          (fn [] (do (.close rdr)
-                     (.close istream)
-                     true))
+          (fn [] (do
+                   (.close rdr)
+                   (.close istream)
+                   true))
           enc
           bom-name])))
   ([src encoding] (get-reader src encoding nil))
@@ -103,9 +104,8 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
   (->
    (fn []
      (let [res (read-from-csv rdr)]
-       (if (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
-         (transform-line res)
-         (clean-rdr))))
+       (when (and res (or (nil? limit) (< (.getLineNumber rdr) limit)))
+         (transform-line res))))
    (vary-meta assoc ::csv-reader rdr ::clean-reader clean-rdr)))
 
 (defn ^:no-doc line-read-fn
