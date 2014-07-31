@@ -30,7 +30,7 @@
 (def ^:no-doc boms
   {[(byte -1) (byte -2)] [:utf16-le 2]
    [(byte -2) (byte -1)] [:utf16-be 2]
-   [(byte -2) (byte -69) (byte -65)] [:utf8 3]
+   [(byte -17) (byte -69) (byte -65)] [:utf8 3]
    [(byte -1) (byte -2) (byte 0) (byte 0)] [:utf32-le 4]
    [(byte 0) (byte 0) (byte -2) (byte -1)] [:utf32-be 4]})
 
