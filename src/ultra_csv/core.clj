@@ -64,8 +64,9 @@
        (let [raw-stream (io/input-stream src)
              enc (or encoding (guess-charset raw-stream))
              [^InputStream istream bom-name] (if (nil? bom)
-                                  (skip-bom-from-stream-if-present raw-stream)
-                                  [(.read raw-stream (byte-array (get bom-sizes bom 0))) bom])
+                                               (skip-bom-from-stream-if-present raw-stream)
+                                               (do (.read raw-stream (byte-array (get bom-sizes bom 0)))
+                                                   [raw-stream bom]))
              rdr (io/reader istream :encoding enc)]
          [rdr
           (fn [] (do
