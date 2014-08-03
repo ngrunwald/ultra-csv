@@ -3,7 +3,9 @@
             [clojure.string :as str]
             [clojure.walk :as walk]
             [schema [core :as s] [coerce :as c]])
-  (:import [org.supercsv.io CsvMapReader CsvListReader AbstractCsvReader]
+  (:import [org.supercsv.io
+            CsvMapReader CsvListReader AbstractCsvReader
+            CsvMapWriter CsvListWriter AbstractCsvWriter]
            [org.supercsv.prefs CsvPreference CsvPreference$Builder]
            [java.io Reader BufferedReader InputStream PushbackInputStream]
            [java.nio.charset Charset]
@@ -32,13 +34,20 @@
    [(byte -2) (byte -1)] [:utf16-be 2]
    [(byte -17) (byte -69) (byte -65)] [:utf8 3]
    [(byte -1) (byte -2) (byte 0) (byte 0)] [:utf32-le 4]
-   [(byte 0) (byte 0) (byte -2) (byte -1)] [:utf32-be 4]})
+   [(byte 0) (byte 0) (byte -2) (byte -1)] [:utf32-be 4]
+   [] [:none 0]})
 
 (def ^:no-doc bom-sizes
   (reduce (fn
             [acc [_ [bom-name bom-size]]]
             (assoc acc bom-name bom-size))
-          {:none 0} boms))
+          {} boms))
+
+(def ^:no-doc bom-bytes
+  (reduce (fn
+            [acc [bts [bom-name _]]]
+            (assoc acc bom-name bts))
+          {} boms))
 
 (defn ^:no-doc skip-bom-from-stream-if-present
   [stream]
@@ -565,3 +574,29 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                (clean-rdr)
                (throw e)))))))
   ([uri] (read-csv uri {})))
+
+(defn get-writer
+  [tgt encoding bom]
+  (if-not (string? tgt)
+    [(io/writer tgt :encoding encoding) (fn [] nil)]
+    (let [stream (io/output-stream tgt)
+          bom-bts (get bom-bytes bom)]
+      (doseq [b bom-bts]
+        (.write stream b))
+      (let [wrt (io/writer stream :encoding encoding)]
+        [wrt (fn [] (.close wrt))]))))
+
+(defn write-csv!
+  ([uri
+    {:keys [bom encoding field-names coercers] :as spec
+     :or {bom :none}}
+    data]
+     (let [[wrt clean-writer] (get-writer uri encoding bom)
+           prefs (csv-prefs spec)
+           sample (first data)
+           seq-input? (sequential? sample)
+           csv-writer (if seq-input?
+                        (CsvListWriter. wrt prefs)
+                        (CsvMapWriter. wrt prefs))
+           out-coercers (merge-coercers :output csv-coercer coercers)]
+       )))
