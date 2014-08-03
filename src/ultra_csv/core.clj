@@ -198,9 +198,28 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
    [Num double-string?]])
 
 (def ^:no-doc csv-coercer
-  {s/Int (fn [s] (Long/parseLong s))
-   Num (fn [s] (Double/parseDouble s))
-   s/Keyword (fn [s] (keyword s))})
+  {s/Int [(fn [s] (Long/parseLong s)) str]
+   Num [(fn [s] (Double/parseDouble s)) str]
+   s/Keyword [(fn [s] (keyword s)) name]})
+
+(defn ^:no-doc extract-coercer
+  [io coercer]
+  (reduce
+   (fn [acc [k fmt-spec]]
+     (let [[in out] (if (fn? fmt-spec)
+                      [fmt-spec str]
+                      fmt-spec)]
+       (assoc acc k (case io
+                      :input in
+                      :output out))))
+   {} coercer))
+
+(defn ^:no-doc merge-coercers
+  [io & coercers]
+  (if (empty? coercers)
+    {}
+    (let [io-coercers (map (partial extract-coercer io) coercers)]
+      (apply merge io-coercers))))
 
 (defn ^:no-doc take-higher
   [cands]
@@ -424,7 +443,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
         vec-output (not (or header? field-names))
         parse-csv (if (empty? schema)
                     identity
-                    (c/coercer schema (merge csv-coercer coercers)))
+                    (c/coercer schema (merge-coercers :input csv-coercer coercers)))
         read-map (if (and (not vec-output) keywordize-keys?)
                    (comp parse-csv keywordize-keys)
                    parse-csv)
@@ -520,7 +539,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                    _ (when header? (.getHeader csv-rdr true))]
                (let [parse-csv (if (empty? schema)
                                  identity
-                                 (c/coercer schema (merge csv-coercer coercers)))
+                                 (c/coercer schema (merge-coercers :input csv-coercer coercers)))
                      read-map (if (and (not vec-output) keywordize-keys?)
                                 (comp parse-csv keywordize-keys)
                                 parse-csv)
