@@ -1,7 +1,9 @@
 (ns ultra-csv.core
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clojure.walk :as walk]
+            [clojure
+             [walk :as walk]
+             [data :as data]]
             [schema [core :as s] [coerce :as c]])
   (:import [org.supercsv.io
             CsvMapReader CsvListReader AbstractCsvReader
@@ -576,27 +578,58 @@ It takes the same options as [[read-csv]] minus some processing and the file and
   ([uri] (read-csv uri {})))
 
 (defn get-writer
-  [tgt encoding bom]
+  [tgt bom options]
   (if-not (string? tgt)
-    [(io/writer tgt :encoding encoding) (fn [] nil)]
-    (let [stream (io/output-stream tgt)
+    [(apply io/writer tgt (apply concat options)) (fn [& _] nil)]
+    (let [stream (apply io/output-stream tgt (apply concat options))
           bom-bts (get bom-bytes bom)]
       (doseq [b bom-bts]
         (.write stream b))
-      (let [wrt (io/writer stream :encoding encoding)]
-        [wrt (fn [] (.close wrt))]))))
+      (let [wrt (apply io/writer stream (apply concat options))]
+        [wrt (fn [& all]
+               (doseq [r all] (.close r))
+               (.close wrt))]))))
+
+(defn fields-list
+  ([field-names sample-names position]
+     (let [all-spec-fields (into #{} field-names)
+           all-sample-fields (into #{} (map name sample-names))
+           [removed added _] (data/diff all-spec-fields all-sample-fields)
+           base-list (remove (into #{} removed) field-names)]
+       (case position
+         :before (into [] (concat (sort added) base-list))
+         :after (into [] (concat base-list (sort added))))))
+  ([field-names sample-names] (fields-list field-names sample-names :after)))
 
 (defn write-csv!
   ([uri
-    {:keys [bom encoding field-names coercers] :as spec
-     :or {bom :none}}
+    {:keys [bom encoding field-names coercers header? append] :as spec
+     :or {bom :none
+          header? true}}
     data]
-     (let [[wrt clean-writer] (get-writer uri encoding bom)
+     (let [[wrt clean-writer] (get-writer uri bom (select-keys spec [:encoding :append]))
            prefs (csv-prefs spec)
            sample (first data)
            seq-input? (sequential? sample)
-           csv-writer (if seq-input?
-                        (CsvListWriter. wrt prefs)
-                        (CsvMapWriter. wrt prefs))
-           out-coercers (merge-coercers :output csv-coercer coercers)]
-       )))
+           [csv-writer write-fn] (if seq-input?
+                                   (let [csv-wrt (CsvListWriter. wrt prefs)]
+                                     [csv-wrt (fn [^CsvListWriter wrt l] (.write wrt (map str l)))])
+                                   (let [csv-wrt (CsvMapWriter. wrt prefs)
+                                         fields (fields-list field-names (keys sample))
+                                         fields-array (into-array String fields)]
+                                     (when (and header?
+                                                (not append))
+                                       (.writeHeader csv-wrt fields-array))
+                                     [csv-wrt (fn [^CsvMapWriter wrt m]
+                                                (let [to-write (reduce (fn [acc [k v]]
+                                                                         (assoc! acc (name k) (str v)))
+                                                                       (transient {}) m)]
+                                                  (.write wrt (persistent! to-write) fields-array)))]))
+           ;; out-coercers (merge-coercers :output csv-coercer coercers)
+           ]
+       (try
+         (doseq [l data
+                :when l]
+           (write-fn csv-writer l))
+         (finally
+           (clean-writer csv-writer))))))
