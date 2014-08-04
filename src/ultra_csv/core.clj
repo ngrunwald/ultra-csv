@@ -4,7 +4,8 @@
             [clojure
              [walk :as walk]
              [data :as data]]
-            [schema [core :as s] [coerce :as c]])
+            [schema [core :as s] [coerce :as c]]
+            [clojure.tools.logging :as log])
   (:import [org.supercsv.io
             CsvMapReader CsvListReader AbstractCsvReader
             CsvMapWriter CsvListWriter AbstractCsvWriter]
@@ -321,7 +322,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
     (fn []
       (swap! total inc)
       (when (= 0 (rem @total step))
-        (println "Processed" @total "lines"))
+        (log/info "Processed" @total "lines"))
       (f))))
 
 (defn ^:no-doc make-read-fn
@@ -336,8 +337,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
                      (f)
                      (catch Exception e
                        (if-not silent?
-                         (binding [*out* *err*]
-                           (println "Error while reading csv:" e)))))]
+                         (log/error e "Error while reading csv"))))]
            (if res
              res
              ;; read next line if there was an exception
@@ -643,6 +643,8 @@ It takes the same options as [[read-csv]] minus some processing and the file and
          (doseq [l data
                 :when l]
            (write-fn csv-writer l))
+         (catch Exception e
+           (log/error e "Error writing csv file"))
          (finally
            (clean-writer csv-writer)))))
   ([uri data] (write-csv! uri {} data)))
