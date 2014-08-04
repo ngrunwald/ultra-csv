@@ -577,7 +577,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                (throw e)))))))
   ([uri] (read-csv uri {})))
 
-(defn get-writer
+(defn ^:no-doc get-writer
   [tgt bom options]
   (if-not (string? tgt)
     [(apply io/writer tgt (apply concat options)) (fn [& _] nil)]
@@ -590,7 +590,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                (doseq [r all] (.close r))
                (.close wrt))]))))
 
-(defn fields-list
+(defn ^:no-doc fields-list
   ([field-names sample-names position]
      (let [all-spec-fields (into #{} field-names)
            all-sample-fields (into #{} (map name sample-names))
@@ -602,6 +602,18 @@ It takes the same options as [[read-csv]] minus some processing and the file and
   ([field-names sample-names] (fields-list field-names sample-names :after)))
 
 (defn write-csv!
+  "This function takes a target (either a *Reader*, *InputStream* or *String* URI), a spec of options
+ and a seq of either *maps* or *seqs*. Each data structure is written to the target csv
+ as a single line.
+
+ Right now, custom encoders are ignored and each value is just coerced to its *String* format.
+
+ The option map is the same as [[read-csv]] with these added options:
+
+ *Write options*
+
+ +  **append**: if set to true, opens the given uri in append mode. *header?* option is then
+    ignored."
   ([uri
     {:keys [bom encoding field-names coercers header? append] :as spec
      :or {bom :none
@@ -632,4 +644,5 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                 :when l]
            (write-fn csv-writer l))
          (finally
-           (clean-writer csv-writer))))))
+           (clean-writer csv-writer)))))
+  ([uri data] (write-csv! uri {} data)))
