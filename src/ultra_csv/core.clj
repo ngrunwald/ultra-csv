@@ -10,7 +10,9 @@
             CsvMapReader CsvListReader AbstractCsvReader
             CsvMapWriter CsvListWriter AbstractCsvWriter]
            [org.supercsv.prefs CsvPreference CsvPreference$Builder]
-           [java.io Reader BufferedReader InputStream PushbackInputStream]
+           [java.io
+            Reader BufferedReader InputStream PushbackInputStream
+            StringWriter             Writer]
            [java.nio.charset Charset]
            [com.ibm.icu.text CharsetDetector]
            [java.text SimpleDateFormat]))
@@ -579,16 +581,22 @@ It takes the same options as [[read-csv]] minus some processing and the file and
 
 (defn ^:no-doc get-writer
   [tgt bom options]
-  (if-not (string? tgt)
-    [(apply io/writer tgt (apply concat options)) (fn [& _] nil)]
-    (let [stream (apply io/output-stream tgt (apply concat options))
-          bom-bts (get bom-bytes bom)]
-      (doseq [b bom-bts]
-        (.write stream b))
-      (let [wrt (apply io/writer stream (apply concat options))]
-        [wrt (fn [& all]
-               (doseq [r all] (.close r))
-               (.close wrt))]))))
+  (cond
+   (instance? Writer tgt)
+   [tgt (fn [& _] nil)]
+
+   (string? tgt)
+   (let [stream (apply io/output-stream tgt (apply concat options))
+         bom-bts (get bom-bytes bom)]
+     (doseq [b bom-bts]
+       (.write stream b))
+     (let [wrt (apply io/writer stream (apply concat options))]
+       [wrt (fn [& all]
+              (doseq [r all] (.close r))
+              (.close wrt))]))
+
+   :default
+   [(apply io/writer tgt (apply concat options)) (fn [& _] nil)]))
 
 (defn ^:no-doc fields-list
   ([field-names sample-names position]
@@ -646,5 +654,15 @@ It takes the same options as [[read-csv]] minus some processing and the file and
          (catch Exception e
            (log/error e "Error writing csv file"))
          (finally
+           (.flush csv-writer)
            (clean-writer csv-writer)))))
   ([uri data] (write-csv! uri {} data)))
+
+(defn csv-line
+  [spec data]
+  (let [wrt (StringWriter.)
+        full-spec (assoc spec :header? false)]
+    (write-csv! wrt full-spec [data])
+    (.flush wrt)
+    (let [line (.toString wrt)]
+      line)))
