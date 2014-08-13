@@ -4,7 +4,10 @@
             [clojure
              [walk :as walk]
              [data :as data]]
-            [schema [core :as s :refer [maybe Int Keyword]] [coerce :as c]]
+            [schema [core :as s
+                     :refer [maybe Int Keyword optional-key required-key
+                             one optional]]
+             [coerce :as c]]
             [clojure.tools.logging :as log])
   (:import [org.supercsv.io
             CsvMapReader CsvListReader AbstractCsvReader
