@@ -4,7 +4,7 @@
             [clojure
              [walk :as walk]
              [data :as data]]
-            [schema [core :as s] [coerce :as c]]
+            [schema [core :as s :refer [maybe Int Keyword]] [coerce :as c]]
             [clojure.tools.logging :as log])
   (:import [org.supercsv.io
             CsvMapReader CsvListReader AbstractCsvReader
@@ -12,10 +12,23 @@
            [org.supercsv.prefs CsvPreference CsvPreference$Builder]
            [java.io
             Reader BufferedReader InputStream PushbackInputStream
-            StringWriter             Writer]
+            StringWriter Writer File]
            [java.nio.charset Charset]
            [com.ibm.icu.text CharsetDetector]
            [java.text SimpleDateFormat]))
+
+(defn write-spec
+  "Writes a spec struct to a String"
+  [spec]
+  (pr-str spec))
+
+(defn load-spec-str
+  "Loads a spec structure from String form. **BEWARE** The uses eval
+   on the passed String, only use on inputs that are **ABSOLUTELY SAFE**"
+  [spec-string]
+  (binding [*ns* (the-ns 'ultra-csv.core)]
+    (in-ns 'ultra-csv.core)
+    (load-string spec-string)))
 
 (declare analyze-csv)
 
@@ -74,21 +87,23 @@
 (defn ^:no-doc get-reader
   ([src encoding bom]
      (if (instance? java.io.Reader src)
-       [src (fn [] nil) encoding nil]
-       (let [raw-stream (io/input-stream src)
+       [src (fn [& _] nil) encoding nil]
+       (let [[raw-stream close-fn] (if (instance? java.io.InputStream src)
+                                     [src (fn [& _] nil)]
+                                     (let [istream (io/input-stream src)]
+                                       [istream
+                                        (fn [& args]
+                                          (.close istream)
+                                          (doseq [arg args]
+                                            (.close arg))
+                                          true)]))
              enc (or encoding (guess-charset raw-stream))
              [^InputStream istream bom-name] (if (nil? bom)
                                                (skip-bom-from-stream-if-present raw-stream)
                                                (do (.read raw-stream (byte-array (get bom-sizes bom 0)))
                                                    [raw-stream bom]))
              rdr (io/reader istream :encoding enc)]
-         [rdr
-          (fn [] (do
-                   (.close rdr)
-                   (.close istream)
-                   true))
-          enc
-          bom-name])))
+         [rdr close-fn enc bom-name])))
   ([src encoding] (get-reader src encoding nil))
   ([src] (get-reader src nil nil)))
 
@@ -99,7 +114,7 @@
       (cons
        (vary-meta (transform-line res) assoc ::csv-reader rdr ::clean-reader clean-rdr)
        (lazy-seq (read-row rdr read-from-csv transform-line clean-rdr limit)))
-      (clean-rdr))))
+      (clean-rdr rdr))))
 
 (defn make-date-coercer
   "Makes a date coercer to use with the *coercer* option of [[read-csv]].
@@ -208,13 +223,13 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
 (def ^:no-doc Num java.lang.Double)
 
 (def ^:no-doc known-types
-  [[s/Int int-string?]
+  [[Int int-string?]
    [Num double-string?]])
 
 (def ^:no-doc csv-coercer
-  {s/Int [(fn [s] (Long/parseLong s)) str]
+  {Int [(fn [s] (Long/parseLong s)) str]
    Num [(fn [s] (Double/parseDouble s)) str]
-   s/Keyword [(fn [s] (keyword s)) name]})
+   Keyword [(fn [s] (keyword s)) name]})
 
 (defn ^:no-doc extract-coercer
   [io coercer]
@@ -334,16 +349,16 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
     f
     (let [m (meta f)]
       (->
-       (fn []
+       (fn [rdr]
          (let [res (try
-                     (f)
+                     (f rdr)
                      (catch Exception e
                        (if-not silent?
                          (log/error e "Error while reading csv"))))]
            (if res
              res
              ;; read next line if there was an exception
-             (recur))))
+             (recur rdr))))
        (vary-meta (fn [o n] (merge n o)) m)))))
 
 (defn close!
@@ -389,10 +404,12 @@ for the spec. Recognised options are:
           keywordize-keys? true
           sample-size 100}
      :as opts}]
+     (when-not (or (instance? String uri)
+                   (instance? File uri))
+       (throw (ex-info "Cannot guess the specs of inputs that are neither String path nor File")))
      (let [[^Reader rdr clean-rdr enc bom-name] (get-reader uri encoding bom)]
        (try
-         (let [resettable? (.markSupported rdr)
-               {guessed-schema :fields-schema
+         (let [{guessed-schema :fields-schema
                 guessed-delimiter :delimiter
                 guessed-header :header
                 guessed-quote :quoted?
@@ -402,30 +419,30 @@ for the spec. Recognised options are:
                                   (throw e)
                                   {}))
                 ^CsvPreference pref-opts (csv-prefs (merge analysis opts))
-               vec-output (not (or (get opts :header? guessed-header) field-names))
-               ^AbstractCsvReader csv-rdr (if vec-output
-                                            (CsvListReader. rdr pref-opts)
-                                            (CsvMapReader. rdr pref-opts))
-               fnames (when-not vec-output
-                        (mapv field-names-fn
-                              (cond
-                               (or header? guessed-header) (.getHeader csv-rdr true)
-                               field-names field-names)))
-               wrap-types (if nullable-fields? #(s/maybe %) identity)
-               wrap-keys (if keywordize-keys? (comp keyword str/trim) str/trim)
-               full-specs (if vec-output
-                            (let [infered-schema (map-indexed (fn [idx t] (s/one (wrap-types t) (str "col" idx))) guessed-schema)]
-                              (if (and guess-types? (vector? schema) (= (count schema) (count infered-schema)))
-                                (into [] (map (fn [given guessed] (if (nil? given) guessed given)) schema infered-schema))
-                                (into [] infered-schema)))
-                            (let [infered-schema (zipmap (map wrap-keys fnames) (map wrap-types guessed-schema))]
-                              (if guess-types?
-                               (merge infered-schema schema)
-                               infered-schema)))]
+                vec-output (not (or (get opts :header? guessed-header) field-names))
+                ^AbstractCsvReader csv-rdr (if vec-output
+                                             (CsvListReader. rdr pref-opts)
+                                             (CsvMapReader. rdr pref-opts))
+                fnames (when-not vec-output
+                         (mapv field-names-fn
+                               (cond
+                                (or header? guessed-header) (.getHeader csv-rdr true)
+                                field-names field-names)))
+                wrap-types (if nullable-fields? #(maybe %) identity)
+                wrap-keys (if keywordize-keys? (comp keyword str/trim) str/trim)
+                full-specs (if vec-output
+                             (let [infered-schema (map-indexed (fn [idx t] (s/one (wrap-types t) (str "col" idx))) guessed-schema)]
+                               (if (and guess-types? (vector? schema) (= (count schema) (count infered-schema)))
+                                 (into [] (map (fn [given guessed] (if (nil? given) guessed given)) schema infered-schema))
+                                 (into [] infered-schema)))
+                             (let [infered-schema (zipmap (map wrap-keys fnames) (map wrap-types guessed-schema))]
+                               (if guess-types?
+                                 (merge infered-schema schema)
+                                 infered-schema)))]
            (merge {:schema full-specs :field-names fnames :delimiter (or delimiter guessed-delimiter)
                    :encoding enc :skip-analysis? true :header? guessed-header :quoted? guessed-quote :bom bom-name} opts))
          (finally
-           (clean-rdr)))))
+           (clean-rdr rdr)))))
   ([uri] (guess-spec uri {})))
 
 (defn ^:no-doc guess-possible?
@@ -525,58 +542,52 @@ It takes the same options as [[read-csv]] minus some processing and the file and
           keywordize-keys? true
           coercers {}}
      :as opts}]
-     (let [guess-allowed? (guess-possible? uri)]
-       (if (and (or (not skip-analysis?)
-                    guess-types)
-                (not guess-allowed?))
-         (throw (ex-info (format "Input of Class %s cannot be reset, cannot guess its specs" (class uri))))
-         (let [[^Reader rdr clean-rdr enc] (get-reader uri encoding bom)]
-           (try
-             (let [resettable? (.markSupported rdr)
-                   {:keys [header? field-names field-names-fn schema encoding
-                           guess-types? strict? greedy? counter-step
-                           silent? limit skip-analysis?]
-                    :or {guess-types? true
-                         strict? true
-                         field-names-fn str/trim}
-                    :as full-spec} (if skip-analysis?
-                                     opts
-                                     (guess-spec uri opts))
-                   fnames-arr (into-array String (map name field-names))
-                   read-fn (if greedy? greedy-read-fn read-row)
-                   vec-output (not (or header? field-names))
-                   ^CsvPreference pref-opts (csv-prefs (merge full-spec opts))
-                   ^AbstractCsvReader csv-rdr (if vec-output
-                                                (CsvListReader. rdr pref-opts)
-                                                (CsvMapReader. rdr pref-opts))
-                   _ (when header? (.getHeader csv-rdr true))]
-               (let [parse-csv (if (empty? schema)
-                                 identity
-                                 (c/coercer schema (merge-coercers :input csv-coercer coercers)))
-                     read-map (if (and (not vec-output) keywordize-keys?)
-                                (comp parse-csv keywordize-keys)
-                                parse-csv)
-                     res-fn (if vec-output
-                              (read-fn csv-rdr
-                                       (make-read-fn (fn [^CsvListReader rdr] (.read rdr))
-                                                     {:strict? strict?
-                                                      :silent? silent?})
-                                       (fn [e] (parse-csv (into [] e)))
-                                       clean-rdr
-                                       limit)
-                              (read-fn csv-rdr
-                                       (make-read-fn (fn [^CsvMapReader rdr] (.read rdr fnames-arr))
-                                                     {:strict? strict?
-                                                      :silent? silent?})
-                                       (fn [e] (read-map e))
-                                       clean-rdr
-                                       limit))]
-                 (cond
-                  counter-step (wrap-with-counter res-fn counter-step)
-                  :default res-fn)))
-             (catch Exception e
-               (clean-rdr)
-               (throw e)))))))
+     (let [[^Reader rdr clean-rdr enc] (get-reader uri encoding bom)]
+       (try
+         (let [{:keys [header? field-names field-names-fn schema encoding
+                       guess-types? strict? greedy? counter-step
+                       silent? limit skip-analysis?]
+                :or {guess-types? true
+                     strict? true
+                     field-names-fn str/trim}
+                :as full-spec} (if skip-analysis?
+                                 opts
+                                 (guess-spec uri opts))
+                fnames-arr (into-array String (map name field-names))
+                read-fn (if greedy? greedy-read-fn read-row)
+                vec-output (not (or header? field-names))
+                ^CsvPreference pref-opts (csv-prefs (merge full-spec opts))
+                ^AbstractCsvReader csv-rdr (if vec-output
+                                             (CsvListReader. rdr pref-opts)
+                                             (CsvMapReader. rdr pref-opts))
+                _ (when header? (.getHeader csv-rdr true))]
+           (let [parse-csv (if (empty? schema)
+                             identity
+                             (c/coercer schema (merge-coercers :input csv-coercer coercers)))
+                 read-map (if (and (not vec-output) keywordize-keys?)
+                            (comp parse-csv keywordize-keys)
+                            parse-csv)
+                 res-fn (if vec-output
+                          (read-fn csv-rdr
+                                   (make-read-fn (fn [^CsvListReader rdr] (.read rdr))
+                                                 {:strict? strict?
+                                                  :silent? silent?})
+                                   (fn [e] (parse-csv (into [] e)))
+                                   clean-rdr
+                                   limit)
+                          (read-fn csv-rdr
+                                   (make-read-fn (fn [^CsvMapReader rdr] (.read rdr fnames-arr))
+                                                 {:strict? strict?
+                                                  :silent? silent?})
+                                   (fn [e] (read-map e))
+                                   clean-rdr
+                                   limit))]
+             (cond
+              counter-step (wrap-with-counter res-fn counter-step)
+              :default res-fn)))
+         (catch Exception e
+           (clean-rdr rdr)
+           (throw e)))))
   ([uri] (read-csv uri {})))
 
 (defn ^:no-doc get-writer
