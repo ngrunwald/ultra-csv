@@ -556,7 +556,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                 :as full-spec} (if skip-analysis?
                                  opts
                                  (guess-spec uri opts))
-                fnames-arr (into-array String (map name field-names))
+                fnames-arr (into-array String (->> field-names (remove nil?) (map name)))
                 read-fn (if greedy? greedy-read-fn read-row)
                 vec-output (not (or header? field-names))
                 ^CsvPreference pref-opts (csv-prefs (merge full-spec opts))
