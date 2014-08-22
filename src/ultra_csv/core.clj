@@ -187,7 +187,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
                                                 candidates (map first diffs))))
                    candidates))
         [[fc fv] [_ sv] & _] (sort-by (fn [[k v]] v) report)]
-    (when (or (< fv sv) (nil? sv))
+    (when (or (<= fv sv) (nil? sv))
       fc)))
 
 (defn ^:no-doc csv-prefs
@@ -423,13 +423,11 @@ for the spec. Recognised options are:
                                   {}))
                 ^CsvPreference pref-opts (csv-prefs (merge analysis opts))
                 vec-output (not (or (get opts :header? guessed-header) field-names))
-                ^AbstractCsvReader csv-rdr (if vec-output
-                                             (CsvListReader. rdr pref-opts)
-                                             (CsvMapReader. rdr pref-opts))
+                ^AbstractCsvReader csv-rdr (CsvListReader. rdr pref-opts)
                 fnames (when-not vec-output
                          (cond
-                          (or header? guessed-header) (map field-names-fn (.getHeader csv-rdr true))
-                          field-names field-names))
+                          (or header? guessed-header) (mapv field-names-fn (.getHeader csv-rdr true))
+                          field-names (into [] field-names)))
                 wrap-types (if nullable-fields? #(maybe %) identity)
                 full-specs (if vec-output
                              (let [infered-schema (map-indexed (fn [idx t] (s/one (wrap-types t) (str "col" idx))) guessed-schema)]
@@ -461,10 +459,11 @@ for the spec. Recognised options are:
          vals-todo values
          acc (transient {})]
     (if-let [k (first names-todo)]
-      (if-let [v (first vals-todo)]
-        (recur (rest names-todo) (rest vals-todo) (assoc! acc k v))
-        (persistent! acc))
-      (if (> (count names-todo) 1)
+      (let [v (first vals-todo)]
+        (if (> (count vals-todo) 0)
+          (recur (rest names-todo) (rest vals-todo) (assoc! acc k v))
+          (persistent! acc)))
+      (if (> (count names-todo) 0)
         (recur (rest names-todo) (rest vals-todo) acc)
         (persistent! acc)))))
 
