@@ -4,9 +4,11 @@
             [clojure
              [walk :as walk]
              [data :as data]]
-            [schema [core :as s
-                     :refer [maybe Int Keyword optional-key required-key
-                             one optional]]
+            [schema
+             [core :as s
+              :refer [maybe Int Keyword optional-key required-key
+                      one optional]]
+             [utils :refer [error?]]
              [coerce :as c]]
             [clojure.tools.logging :as log])
   (:import [org.supercsv.io
@@ -291,14 +293,13 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
   [line schema]
   (if (> (count (filter nil? line)) 0)
     false
-    (let [full-schema (mapv #(s/one % "toto") schema)
-          coerce-line (c/coercer full-schema csv-coercer)]
+    (let [full-schema (mapv #(s/one % "foo") schema)
+          coerce-line (c/coercer full-schema (extract-coercer :input csv-coercer))]
       (try
         (let [coerced (coerce-line line)]
-          (s/validate full-schema coerced)
-          false)
+          (error? coerced))
         (catch Exception e
-          true)))))
+          false)))))
 
 (defn ^:no-doc is-quoted?
   [lines delimiter]
