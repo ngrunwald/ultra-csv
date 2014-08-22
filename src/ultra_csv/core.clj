@@ -402,9 +402,8 @@ for the spec. Recognised options are:
             guess-types? delimiter nullable-fields? keywordize-keys?
             sample-size bom]
      :or {guess-types? true
-          field-names-fn str/trim
+          field-names-fn (comp keyword str/trim)
           nullable-fields? true
-          keywordize-keys? true
           sample-size 100}
      :as opts}]
      (when-not (or (instance? String uri)
@@ -427,18 +426,16 @@ for the spec. Recognised options are:
                                              (CsvListReader. rdr pref-opts)
                                              (CsvMapReader. rdr pref-opts))
                 fnames (when-not vec-output
-                         (mapv field-names-fn
-                               (cond
-                                (or header? guessed-header) (.getHeader csv-rdr true)
-                                field-names field-names)))
+                         (cond
+                          (or header? guessed-header) (map field-names-fn (.getHeader csv-rdr true))
+                          field-names field-names))
                 wrap-types (if nullable-fields? #(maybe %) identity)
-                wrap-keys (if keywordize-keys? (comp keyword str/trim) str/trim)
                 full-specs (if vec-output
                              (let [infered-schema (map-indexed (fn [idx t] (s/one (wrap-types t) (str "col" idx))) guessed-schema)]
                                (if (and guess-types? (vector? schema) (= (count schema) (count infered-schema)))
                                  (into [] (map (fn [given guessed] (if (nil? given) guessed given)) schema infered-schema))
                                  (into [] infered-schema)))
-                             (let [infered-schema (zipmap (map wrap-keys fnames) (map wrap-types guessed-schema))]
+                             (let [infered-schema (zipmap fnames (map wrap-types guessed-schema))]
                                (if guess-types?
                                  (merge infered-schema schema)
                                  infered-schema)))]
@@ -457,17 +454,28 @@ for the spec. Recognised options are:
         (.markSupported typed-rdr)))
     (catch Exception _ false)))
 
+(defn ^:no-doc read-map
+  [field-names values]
+  (loop [names-todo field-names
+         vals-todo values
+         acc (transient {})]
+    (if-let [k (first names-todo)]
+      (if-let [v (first vals-todo)]
+        (recur (rest names-todo) (rest vals-todo) (assoc! acc k v))
+        (persistent! acc))
+      (if (> (count names-todo) 1)
+        (recur (rest names-todo) (rest vals-todo) acc)
+        (persistent! acc)))))
+
 (defn csv-line-reader
   "This function returns a reader function that accepts inputs of one *String* line at a time.
 It takes the same options as [[read-csv]] minus some processing and the file and analysis options."
-  [{:keys [header? field-names field-names-fn schema
+  [{:keys [header? field-names schema
            guess-types? strict? counter-step
            silent? limit nullable-fields?
-           keywordize-keys? coercers]
+           coercers]
      :or {guess-types? true
           strict? true
-          field-names-fn str/trim
-          keywordize-keys? true
           coercers {}}
      :as opts}]
   (let [fnames-arr (into-array String (map name field-names))
@@ -477,19 +485,16 @@ It takes the same options as [[read-csv]] minus some processing and the file and
         parse-csv (if (empty? schema)
                     identity
                     (c/coercer schema (merge-coercers :input csv-coercer coercers)))
-        read-map (if (and (not vec-output) keywordize-keys?)
-                   (comp parse-csv keywordize-keys)
-                   parse-csv)
         res-fn (if vec-output
                  (read-fn (fn [^Reader rdr]
                             (with-open [csv-rdr (CsvListReader. rdr pref-opts)]
                               (.read csv-rdr)))
                           (fn [e] (parse-csv (into [] e))))
                  (read-fn (fn [^Reader rdr]
-                            (with-open [csv-rdr (CsvMapReader. rdr pref-opts)]
-                              (.read csv-rdr fnames-arr)))
+                            (with-open [csv-rdr (CsvListReader. rdr pref-opts)]
+                              (.read csv-rdr)))
                           (fn [e]
-                            (read-map (into {} e)))))]
+                            (parse-csv (read-map field-names e)))))]
     res-fn))
 
 (defn read-csv
@@ -556,20 +561,14 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                 :as full-spec} (if skip-analysis?
                                  opts
                                  (guess-spec uri opts))
-                fnames-arr (into-array String (->> field-names (remove nil?) (map name)))
                 read-fn (if greedy? greedy-read-fn read-row)
                 vec-output (not (or header? field-names))
                 ^CsvPreference pref-opts (csv-prefs (merge full-spec opts))
-                ^AbstractCsvReader csv-rdr (if vec-output
-                                             (CsvListReader. rdr pref-opts)
-                                             (CsvMapReader. rdr pref-opts))
+                ^AbstractCsvReader csv-rdr (CsvListReader. rdr pref-opts)
                 _ (when header? (.getHeader csv-rdr true))]
            (let [parse-csv (if (empty? schema)
                              identity
                              (c/coercer schema (merge-coercers :input csv-coercer coercers)))
-                 read-map (if (and (not vec-output) keywordize-keys?)
-                            (comp parse-csv keywordize-keys)
-                            parse-csv)
                  res-fn (if vec-output
                           (read-fn csv-rdr
                                    (make-read-fn (fn [^CsvListReader rdr] (.read rdr))
@@ -579,10 +578,10 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                                    clean-rdr
                                    limit)
                           (read-fn csv-rdr
-                                   (make-read-fn (fn [^CsvMapReader rdr] (.read rdr fnames-arr))
+                                   (make-read-fn (fn [^CsvListReader rdr] (.read rdr))
                                                  {:strict? strict?
                                                   :silent? silent?})
-                                   (fn [e] (read-map e))
+                                   (fn [e] (parse-csv (read-map field-names e)))
                                    clean-rdr
                                    limit))]
              (cond
