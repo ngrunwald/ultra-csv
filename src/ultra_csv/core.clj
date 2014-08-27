@@ -127,12 +127,14 @@ Given a formatter *String* and an optional timezonr *String*, this will return
 a ready to use function. Details on the format can be found at
 http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
   ([fmt]
-     (let [formatter (SimpleDateFormat. fmt)]
-       (fn [^String s] (.parse formatter s))))
+     (fn [^String s]
+       (let [formatter (SimpleDateFormat. fmt)]
+         (.parse formatter s))))
   ([fmt timezone]
-     (let [formatter (SimpleDateFormat. fmt)]
-       (.setTimeZone formatter (java.util.TimeZone/getTimeZone timezone))
-       (fn [^String s] (.parse formatter s)))))
+     (fn [^String s]
+       (let [formatter (SimpleDateFormat. fmt)]
+         (.setTimeZone formatter (java.util.TimeZone/getTimeZone timezone))
+         (.parse formatter s)))))
 
 (defn ^:no-doc greedy-read-fn
   [^AbstractCsvReader rdr read-from-csv transform-line clean-rdr limit]
