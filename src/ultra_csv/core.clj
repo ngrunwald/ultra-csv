@@ -582,7 +582,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
          (let [read-fn (if greedy? greedy-read-fn read-row)
                vec-output (not (or header? field-names))
                ^CsvPreference pref-opts (csv-prefs (merge full-spec opts))
-               _ (when (> skip 0) (dotimes [_ skip] (.readLine rdr)))
+               _ (when (and skip (> skip 0)) (dotimes [_ skip] (.readLine rdr)))
                ^AbstractCsvReader csv-rdr (CsvListReader. rdr pref-opts)
                _ (when header? (.getHeader csv-rdr true))
                parse-csv (if (empty? schema)
