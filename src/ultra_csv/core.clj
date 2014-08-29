@@ -212,12 +212,9 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
     (with-open [rdr (java.io.StringReader. txt)]
       (let [listr (CsvListReader. rdr prefs)
             seg-lines (loop [out []]
-                        (try
-                          (if-let [fields (.read listr)]
-                           (recur (conj out (into [] fields)))
-                           out)
-                          (catch Exception e
-                            out)))]
+                        (if-let [fields (try (.read listr) (catch Exception _ nil))]
+                          (recur (conj out (into [] fields)))
+                          out))]
         (.close listr)
         seg-lines))))
 
