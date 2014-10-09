@@ -7,7 +7,7 @@
             [schema
              [core :as s
               :refer [maybe Int Keyword optional-key required-key
-                      one optional]]
+                      one optional Any Num]]
              [utils :refer [error?]]
              [coerce :as c]]
             [clojure.edn :as edn]
@@ -228,7 +228,10 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
   (if (re-matches #"-?\d[\d\p{Zs}']*([\.,][\d\p{Zs}']*\d)?" s)
     true false))
 
-(def ^:no-doc Num java.lang.Number)
+(defn ^:no-doc percent-string?
+  [s]
+  (if (re-matches #"-?\d+([\.,]\d+)?\s*%" s)
+    true false))
 
 (def ^:no-doc known-types
   [[Int int-string?]
@@ -236,10 +239,13 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
 
 (def ^:no-doc csv-coercer
   {Int [(fn [s] (Long/parseLong s)) str]
-   Num [(fn [s] (-> s
-                    (str/replace #"[\p{Zs}']" "")
-                    (str/replace #"," ".")
-                    (edn/read-string))) str]
+   Num [(fn [s] (let [percent? (percent-string? s)]
+                  (-> s
+                      (cond-> percent? (str/replace #"%$" "")
+                              :else (str/replace #"[\p{Zs}']" ""))
+                      (str/replace #"," ".")
+                      (edn/read-string)
+                      (cond-> percent? (/ (float 100)))))) str]
    Keyword [(fn [s] (keyword s)) name]})
 
 (defn ^:no-doc extract-coercer
