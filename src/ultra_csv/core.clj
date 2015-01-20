@@ -6,7 +6,7 @@
              [data :as data]]
             [schema
              [core :as s
-              :refer [maybe Int Keyword optional-key required-key
+              :refer [maybe either Int Keyword optional-key required-key
                       one optional Any Num]]
              [utils :refer [error?]]
              [coerce :as c]]
