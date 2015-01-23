@@ -120,7 +120,7 @@
       (cons
        (vary-meta (transform-line res) assoc ::csv-reader rdr ::clean-reader clean-rdr)
        (lazy-seq (read-row rdr read-from-csv transform-line clean-rdr limit)))
-      (clean-rdr rdr))))
+      (do (clean-rdr rdr) nil))))
 
 (defn make-date-coercer
   "Makes a date coercer to use with the *coercer* option of [[read-csv]].
