@@ -1,4 +1,4 @@
-(defproject ultra-csv "0.2.0-SNAPSHOT"
+(defproject ultra-csv "0.2.0"
   :description "A smart reader for CSV files"
   :url "https://github.com/ngrunwald/ultra-csv"
   :license {:name "Eclipse Public License"
