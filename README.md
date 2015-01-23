@@ -23,9 +23,7 @@ A smart reader for CSV files.
 
 In your `project.clj` dependencies for *leiningen*:
 
-```clojure
-[ultra-csv "0.2.0"]
-```
+[![Clojars Project](http://clojars.org/ultra-csv/latest-version.svg)](http://clojars.org/ultra-csv)
 
 ## Usage
 
