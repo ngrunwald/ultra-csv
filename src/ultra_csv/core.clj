@@ -437,12 +437,12 @@ for the spec. Recognised options are:
                 ^AbstractCsvReader csv-rdr (CsvListReader. rdr pref-opts)
                 fnames (when-not vec-output
                          (cond
-                          (or header? guessed-header) (let [header (.getHeader csv-rdr true)
-                                                            keywordize? (not (some #(re-find #"[\s':\\/@\(\)]" %) header))]
-                                                        (if keywordize?
-                                                          (mapv (or field-names-fn (comp keyword str/trim)) header)
-                                                          (mapv (or field-names-fn str/trim) header)))
-                          field-names (into [] field-names)))
+                           field-names (into [] field-names)
+                           (or header? guessed-header) (let [header (.getHeader csv-rdr true)
+                                                             keywordize? (not (some #(re-find #"[\s':\\/@\(\)]" %) header))]
+                                                         (if keywordize?
+                                                           (mapv (or field-names-fn (comp keyword str/trim)) header)
+                                                           (mapv (or field-names-fn str/trim) header)))))
                 wrap-types (if nullable-fields? #(maybe %) identity)
                 full-specs (if vec-output
                              (let [infered-schema (map-indexed (fn [idx t] (s/one (wrap-types (if guess-types? t String)) (str "col" idx))) guessed-schema)]
