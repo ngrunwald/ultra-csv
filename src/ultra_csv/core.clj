@@ -78,7 +78,7 @@
   (let [pbis (PushbackInputStream. stream 4)
         bom (byte-array 4)]
     (.read pbis bom)
-    (let [[a b c d :as first-four] (into [] (seq bom))
+    (let [[a b c _ :as first-four] (into [] (seq bom))
           first-two [a b]
           first-three [a b c]
           [bom-name bom-size] (or (boms first-two) (boms first-three) (boms first-four))]
@@ -189,7 +189,7 @@ http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html"
                                                   (update-in acc [k] #(if % (inc %) 1)))
                                                 candidates (map first diffs))))
                    candidates))
-        [[fc fv] [_ sv] & _] (sort-by (fn [[k v]] v) report)]
+        [[fc fv] [_ sv] & _] (sort-by (fn [[_ v]] v) report)]
     (when (or (<= fv sv) (nil? sv))
       fc)))
 
@@ -439,10 +439,14 @@ for the spec. Recognised options are:
                          (cond
                            field-names (into [] field-names)
                            (or header? guessed-header) (let [header (.getHeader csv-rdr true)
-                                                             keywordize? (not (some #(re-find #"[\s':\\/@\(\)]" %) header))]
+                                                             keywordize? (if keywordize-keys?
+                                                                           true
+                                                                           (not (some (fn [col] (if (nil? col)
+                                                                                                  false
+                                                                                                  (re-find #"[\s':\\/@\(\)]" col))) header)))]
                                                          (if keywordize?
-                                                           (mapv (or field-names-fn (comp keyword str/trim)) header)
-                                                           (mapv (or field-names-fn str/trim) header)))))
+                                                           (mapv (or field-names-fn (comp keyword (fnil str/trim ""))) header)
+                                                           (mapv (or field-names-fn (fnil str/trim "")) header)))))
                 wrap-types (if nullable-fields? #(maybe %) identity)
                 full-specs (if vec-output
                              (let [infered-schema (map-indexed (fn [idx t] (s/one (wrap-types (if guess-types? t String)) (str "col" idx))) guessed-schema)]
@@ -497,8 +501,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
           strict? true
           coercers {}}
      :as opts}]
-  (let [fnames-arr (into-array String (map name field-names))
-        pref-opts (csv-prefs opts)
+  (let [pref-opts (csv-prefs opts)
         read-fn line-read-fn
         vec-output (not (or header? field-names))
         parse-csv (if (empty? schema)
@@ -583,7 +586,7 @@ It takes the same options as [[read-csv]] minus some processing and the file and
                                              (instance? File uri))
                                  (throw (ex-info "Cannot guess the specs of inputs that are neither String path nor File" {:uri uri})))
                                (guess-spec uri opts)))
-            [^Reader rdr clean-rdr enc] (get-reader uri encoding bom)]
+            [^Reader rdr clean-rdr _] (get-reader uri encoding bom)]
        (try
          (let [read-fn (if greedy? greedy-read-fn read-row)
                vec-output (not (or header? field-names))

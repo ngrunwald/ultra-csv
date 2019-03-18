@@ -3,14 +3,9 @@
   :url "https://github.com/ngrunwald/ultra-csv"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
-  :dependencies [[org.clojure/clojure "1.9.0"]
+  :dependencies [[org.clojure/clojure "1.10.0"]
                  [net.sf.supercsv/super-csv "2.4.0"]
                  [com.ibm.icu/icu4j "63.1"]
-                 [prismatic/schema "1.1.9"]
+                 [prismatic/schema "1.1.10"]
                  [org.clojure/tools.logging "0.4.1"]]
-  :profiles {:dev {:dependencies [[expectations "2.1.9"]]
-                   :plugins [[lein-expectations "0.0.8"]
-                             [codox "0.8.10"]]
-                   :codox {:src-dir-uri "http://github.com/ngrunwald/ultra-csv/blob/master/"
-                           :src-linenum-anchor-prefix "L"
-                           :defaults {:doc/format :markdown}}}})
+  :profiles {:dev {:dependencies [[nubank/matcher-combinators "0.7.0"]]}})

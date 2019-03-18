@@ -1,6 +1,5 @@
 (ns ultra-csv.core-test
-  (:require [expectations :refer :all]
-            [ultra-csv.core :refer :all]
+  (:require [ultra-csv.core :refer :all]
             [clojure.java.io :as io]))
 
 ;; (def csv-path (io/file (io/resource "census.csv")))

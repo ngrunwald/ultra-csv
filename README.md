@@ -31,18 +31,12 @@ In your `project.clj` dependencies for *leiningen*:
 (def csv-seq (ultra-csv/read-csv "/my/path/to.csv"))
 ```
 
-More documentation forthcoming, for now you can use the quite exhaustive docstrings in the [API Documentation](https://ngrunwald.github.com/ultra-csv).
+More documentation forthcoming, for now you can use the quite exhaustive docstrings in the [API Documentation](https://cljdoc.org/d/ultra-csv/ultra-csv/CURRENT/doc/readme).
 
-## TODO
-
-  - Add writer functionality with roud-tripping capability
-  - Add some kind of integration with [Incanter](http://incanter.org/) to easily produce Datasets
-  - If possible, add more Type detections (dates perhaps?)
-
-Pull Requests welcome!
+[![cljdoc badge](https://cljdoc.org/badge/ultra-csv/ultra-csv)](https://cljdoc.org/d/ultra-csv/ultra-csv/CURRENT)
 
 ## License
 
-Copyright © 2014 Nils Grunwald
+Copyright © 2014-2019 Nils Grunwald
 
 Distributed under the Eclipse Public License, the same as Clojure.
