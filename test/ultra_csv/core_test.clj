@@ -3,7 +3,6 @@
             [clojure.test :refer :all]
             [testit.core :refer :all]))
 
-
 (deftest full-auto-read-lazy
   (let [data (read-csv "./dev-resources/sample01.csv" {:header? true})]
     (facts

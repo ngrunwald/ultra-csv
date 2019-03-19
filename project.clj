@@ -1,4 +1,4 @@
-(defproject ultra-csv "0.2.3-SNAPSHOT"
+(defproject ultra-csv "0.2.3"
   :description "A smart reader for CSV files"
   :url "https://github.com/ngrunwald/ultra-csv"
   :license {:name "Eclipse Public License"
@@ -8,6 +8,4 @@
                  [com.ibm.icu/icu4j "63.1"]
                  [prismatic/schema "1.1.10"]
                  [org.clojure/tools.logging "0.4.1"]]
-  :profiles {:dev {:dependencies [[nubank/matcher-combinators "0.7.0"]
-                                  [metosin/testit "0.3.0"]
-                                  [amperity/greenlight "0.1.4"]]}})
+  :profiles {:dev {:dependencies [[metosin/testit "0.3.0"]]}})
