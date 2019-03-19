@@ -8,4 +8,6 @@
                  [com.ibm.icu/icu4j "63.1"]
                  [prismatic/schema "1.1.10"]
                  [org.clojure/tools.logging "0.4.1"]]
-  :profiles {:dev {:dependencies [[nubank/matcher-combinators "0.7.0"]]}})
+  :profiles {:dev {:dependencies [[nubank/matcher-combinators "0.7.0"]
+                                  [metosin/testit "0.3.0"]
+                                  [amperity/greenlight "0.1.4"]]}})

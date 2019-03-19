@@ -1,9 +1,22 @@
 (ns ultra-csv.core-test
   (:require [ultra-csv.core :refer :all]
-            [clojure.java.io :as io]))
+            [clojure.test :refer :all]
+            [testit.core :refer :all]))
 
-;; (def csv-path (io/file (io/resource "census.csv")))
 
-;; (expect true (> (count (read-csv csv-path)) 0))
-;; (expect 25 (-> (read-csv csv-path) (first) (keys) (count)))
-;; (expect 1 (-> (read-csv csv-path) (first) (:COUNTY)))
+(deftest full-auto-read-lazy
+  (let [data (read-csv "./dev-resources/sample01.csv" {:header? true})]
+    (facts
+     (first data) =in=> {"Nom du POC" "Zéro Déchet",
+                         "Porteur"    "Ville de Roubaix"}
+     (count data) => 10
+     (count (keys (first data))) => 3
+     (close! data) => true)))
+
+(deftest full-auto-read-greedy
+  (let [data (read-csv "./dev-resources/sample01.csv" {:header? true :greedy? true})]
+    (facts
+     (data) =in=> {"Nom du POC" "Zéro Déchet",
+                   "Porteur"    "Ville de Roubaix"}
+     (count (keys (data))) => 3
+     (close! data) => true)))
